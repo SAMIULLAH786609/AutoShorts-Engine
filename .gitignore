@@ -1,0 +1,29 @@
+# Secret API keys
+.env
+
+# Virtual environments
+.venv/
+venv/
+
+# Visual Studio local files
+.vs/
+
+# Generated files
+downloads/
+output/
+logs/
+
+# Generated media
+*.mp3
+*.mp4
+*.wav
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Windows files
+Thumbs.db
+Desktop.ini

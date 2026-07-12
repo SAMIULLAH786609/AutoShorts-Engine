@@ -1,0 +1,6 @@
+google-genai
+edge-tts
+moviepy
+requests
+python-dotenv
+pillow
