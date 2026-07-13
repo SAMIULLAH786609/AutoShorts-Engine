@@ -1,29 +1,36 @@
-# Secret API keys
+# Secrets
 .env
+credentials/
+client_secret*.json
+token*.json
 
 # Virtual environments
 .venv/
 venv/
 
-# Visual Studio local files
-.vs/
-
-# Generated files
+# Generated content
 downloads/
 output/
+thumbnails/
+metadata/
 logs/
 
-# Generated media
+# Media
 *.mp3
-*.mp4
 *.wav
+*.mp4
 
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Windows files
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Windows
 Thumbs.db
 Desktop.ini
