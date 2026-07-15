@@ -3,6 +3,7 @@
 credentials/
 client_secret*.json
 token*.json
+youtube_token.json
 
 # Virtual environments
 .venv/
@@ -11,8 +12,8 @@ venv/
 # Generated content
 downloads/
 output/
-thumbnails/
 metadata/
+thumbnails/
 logs/
 
 # Media
@@ -34,3 +35,4 @@ __pycache__/
 # Windows
 Thumbs.db
 Desktop.ini
+uploaded_videos.json
