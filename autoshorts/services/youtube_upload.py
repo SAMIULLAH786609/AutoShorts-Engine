@@ -1,3 +1,14 @@
+"""
+AutoShorts Engine — YouTube Upload Service.
+
+Handles OAuth 2.0 authentication and video upload via the YouTube Data API v3.
+
+This module is intentionally minimal and stable.
+The working OAuth flow is preserved exactly as-is.
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -6,12 +17,14 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+from autoshorts.services.logging_setup import get_logger
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+log = get_logger("youtube_upload")
 
-CREDENTIALS_DIR = BASE_DIR / "credentials"
-CLIENT_SECRET_FILE = CREDENTIALS_DIR / "client_secret.json"
-TOKEN_FILE = CREDENTIALS_DIR / "youtube_token.json"
+BASE_DIR            = Path(__file__).resolve().parents[2]
+CREDENTIALS_DIR     = BASE_DIR / "credentials"
+CLIENT_SECRET_FILE  = CREDENTIALS_DIR / "client_secret.json"
+TOKEN_FILE          = CREDENTIALS_DIR / "youtube_token.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -19,52 +32,36 @@ SCOPES = [
 
 
 def get_youtube_service():
-    """Authorize the YouTube account and return the API service."""
-
+    """Authorize the YouTube account and return the API service client."""
     if not CLIENT_SECRET_FILE.exists():
         raise FileNotFoundError(
-            "client_secret.json was not found.\n"
-            f"Expected location: {CLIENT_SECRET_FILE}"
+            f"client_secret.json not found.\n"
+            f"Expected: {CLIENT_SECRET_FILE}"
         )
 
     credentials = None
 
     if TOKEN_FILE.exists():
         credentials = Credentials.from_authorized_user_file(
-            str(TOKEN_FILE),
-            SCOPES,
+            str(TOKEN_FILE), SCOPES
         )
 
-    if (
-        credentials
-        and credentials.expired
-        and credentials.refresh_token
-    ):
+    if credentials and credentials.expired and credentials.refresh_token:
+        log.debug("Refreshing expired OAuth token…")
         credentials.refresh(Request())
 
     if not credentials or not credentials.valid:
+        log.info("Opening OAuth browser flow (one-time setup)…")
         flow = InstalledAppFlow.from_client_secrets_file(
-            str(CLIENT_SECRET_FILE),
-            SCOPES,
+            str(CLIENT_SECRET_FILE), SCOPES
         )
-
-        credentials = flow.run_local_server(
-            port=0,
-            prompt="consent",
-        )
+        credentials = flow.run_local_server(port=0, prompt="consent")
 
         CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
+        log.info("OAuth token saved to %s", TOKEN_FILE)
 
-        TOKEN_FILE.write_text(
-            credentials.to_json(),
-            encoding="utf-8",
-        )
-
-    return build(
-        "youtube",
-        "v3",
-        credentials=credentials,
-    )
+    return build("youtube", "v3", credentials=credentials)
 
 
 def upload_video(
@@ -74,35 +71,36 @@ def upload_video(
     hashtags: list[str] | None = None,
     privacy_status: str = "private",
 ) -> str:
-    """Upload an MP4 to YouTube and return its video ID."""
+    """
+    Upload an MP4 to YouTube and return its video ID.
 
+    Parameters
+    ----------
+    video_path     : Path to the local MP4 file.
+    title          : Video title (max 100 chars).
+    description    : Video description.
+    hashtags       : List of hashtag strings (without #).
+    privacy_status : 'private' | 'unlisted' | 'public'.
+
+    Returns the YouTube video ID string.
+    """
     video_path = Path(video_path)
 
     if not video_path.exists():
-        raise FileNotFoundError(
-            f"Video file was not found: {video_path}"
-        )
+        raise FileNotFoundError(f"Video file not found: {video_path}")
 
     if video_path.suffix.lower() != ".mp4":
-        raise ValueError("Only MP4 video files are supported.")
+        raise ValueError("Only .mp4 files are supported.")
 
-    allowed_privacy = {"private", "unlisted", "public"}
-
-    if privacy_status not in allowed_privacy:
-        raise ValueError(
-            "privacy_status must be private, unlisted, or public."
-        )
+    allowed = {"private", "unlisted", "public"}
+    if privacy_status not in allowed:
+        raise ValueError(f"privacy_status must be one of {allowed}")
 
     hashtags = hashtags or []
-
     hashtag_text = " ".join(
-        f"#{tag.strip().lstrip('#')}"
-        for tag in hashtags
-        if tag.strip()
+        f"#{tag.strip().lstrip('#')}" for tag in hashtags if tag.strip()
     )
-
     final_description = description.strip()
-
     if hashtag_text:
         final_description += f"\n\n{hashtag_text}"
 
@@ -112,7 +110,7 @@ def upload_video(
         "snippet": {
             "title": title[:100],
             "description": final_description,
-            "categoryId": "24",
+            "categoryId": "24",   # Entertainment
         },
         "status": {
             "privacyStatus": privacy_status,
@@ -133,12 +131,13 @@ def upload_video(
         media_body=media,
     )
 
-    print("Uploading video to YouTube...")
+    log.info("Uploading '%s' to YouTube (%s)…", title[:60], privacy_status)
 
     response = request.execute()
     video_id = response["id"]
 
-    print("Upload completed successfully.")
-    print("YouTube Video ID:", video_id)
-
+    log.info(
+        "Upload successful! Video ID: %s | URL: https://youtu.be/%s",
+        video_id, video_id,
+    )
     return video_id

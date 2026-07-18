@@ -1,27 +1,32 @@
-# Secrets
+# Secrets and authentication
 .env
 credentials/
 client_secret*.json
-token*.json
-youtube_token.json
+youtube_token*.json
+tiktok_token*.json
+instagram_token*.json
 
-# Virtual environments
+# Python environments
 .venv/
 venv/
 
-# Generated content
+# Generated media and temporary files
 downloads/
 output/
+cache/
+logs/
 metadata/
 thumbnails/
-logs/
 
-# Media
-*.mp3
-*.wav
-*.mp4
+# Local database
+data/*.db
+data/*.sqlite
+data/*.sqlite3
 
-# Python
+# Upload history
+uploaded_videos.json
+
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
@@ -32,7 +37,18 @@ __pycache__/
 *.user
 *.suo
 
+# Generated media
+*.mp3
+*.wav
+*.mp4
+
 # Windows
 Thumbs.db
 Desktop.ini
-uploaded_videos.json
+
+# Node / Frontend
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+.eslintcache

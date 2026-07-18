@@ -501,56 +501,11 @@ def safe_filename(text: str) -> str:
     return cleaned[:60] or "autoshort"
 
 
-def main() -> None:
-    print("\n=== AutoShorts Engine ===\n")
-
-    validate_keys()
-    prepare_folders()
-
-    topic = input("Enter video topic: ").strip()
-
-    if not topic:
-        raise ValueError("Topic cannot be empty.")
-
-    print("\n[1/4] Creating script with Gemini...")
-    plan = generate_video_plan(topic)
-
-    title = str(plan.get("title", topic)).strip()
-    script = str(plan["script"]).strip()
-    keywords = plan["keywords"]
-
-    print("\nTitle:", title)
-    print("\nScript:\n", script)
-    print("\nVisual keywords:", ", ".join(keywords))
-
-    script_path = OUTPUT_DIR / f"{safe_filename(title)}_script.txt"
-    script_path.write_text(script, encoding="utf-8")
-
-    print("\n[2/4] Generating AI voice...")
-    audio_path = DOWNLOAD_DIR / "voice.mp3"
-    asyncio.run(generate_voice(script, audio_path))
-
-    print("\n[3/4] Downloading background videos...")
-    video_paths = download_background_videos(keywords)
-
-    print("\n[4/4] Rendering final video...")
-    output_path = OUTPUT_DIR / f"{safe_filename(title)}.mp4"
-    make_final_video(
-        script=script,
-        audio_path=audio_path,
-        video_paths=video_paths,
-        output_path=output_path,
-    )
-
-    print("\nSUCCESS!")
-    print("Video:", output_path)
-    print("Script:", script_path)
-
+# ---------------------------------------------------------------------------
+# Legacy entry point (kept for reference only — use run.py instead)
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nCancelled by user.")
-    except Exception as error:
-        print("\nERROR:", error)
+    print("This file is a renderer library.")
+    print("Run 'python run.py' to start the automated pipeline.")
+
