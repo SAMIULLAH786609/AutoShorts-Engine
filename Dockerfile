@@ -1,17 +1,7 @@
-# AutoShorts Engine — Docker Image
-# For deployment on Railway, Render, DigitalOcean, AWS, Azure, GCP, or any VPS.
-#
-# Build:   docker build -t autoshorts .
-# Run:     docker run -d --env-file .env \
-#            -v $(pwd)/credentials:/app/credentials \
-#            -v $(pwd)/output:/app/output \
-#            -v $(pwd)/data:/app/data \
-#            -v $(pwd)/logs:/app/logs \
-#            autoshorts
-
+# AutoShorts Engine — Dockerfile for Hugging Face Spaces
 FROM python:3.11-slim
 
-# System dependencies: ffmpeg for video encoding, fonts for subtitles/thumbnails
+# Install system dependencies: ffmpeg, graphics libraries, and fonts
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1-mesa-glx \
@@ -22,21 +12,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy requirements first (better layer caching)
+# Copy root requirements (pipeline) and backend requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements.txt ./backend_requirements.txt
 
-# Copy project source
+# Install all dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r backend_requirements.txt
+
+# Copy project source code
 COPY . .
 
-# Create required directories
-RUN mkdir -p credentials output downloads thumbnails metadata logs data music cache
+# Create all folders used by the app
+RUN mkdir -p credentials output downloads thumbnails metadata logs data music cache && \
+    chmod -R 777 /app
 
-# Set font path for Linux (DejaVu Bold instead of Windows Arial)
+# Environment variables
 ENV FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
-
-# Ensure Python output is not buffered (important for cloud log streaming)
 ENV PYTHONUNBUFFERED=1
+ENV PORT=7860
 
-# Default command: start the scheduler daemon
-CMD ["python", "run.py", "--schedule"]
+# Expose the default Hugging Face Spaces port
+EXPOSE 7860
+
+# Run FastAPI backend using uvicorn
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "7860"]
