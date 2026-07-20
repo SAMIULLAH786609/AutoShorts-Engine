@@ -353,8 +353,8 @@ def render_short(
                 fps=VIDEO_FPS,
                 codec="libx264",
                 audio_codec="aac",
-                preset="medium",
-                threads=4,
+                preset="superfast",
+                threads=1,
                 logger=None,
             )
 
@@ -389,3 +389,7 @@ def render_short(
                 pass
 
         narration.close()
+        
+        # Explicit garbage collection to free memory on 512MB RAM server
+        import gc
+        gc.collect()
