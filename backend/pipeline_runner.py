@@ -184,7 +184,9 @@ def run_pipeline_for_user(
         )
 
         # ── Step 6: Collect videos ────────────────────────────────
-        video_paths = collect_scene_videos(plan.keywords, output_dir=user_dir)
+        # Limit to a maximum of 3 keywords to prevent high RAM usage in MoviePy
+        limited_keywords = plan.keywords[:3] if plan.keywords else []
+        video_paths = collect_scene_videos(limited_keywords, output_dir=user_dir)
 
         # ── Step 7: Render ────────────────────────────────────────
         video_path = output_dir / f"{safe_name}_{timestamp}.mp4"

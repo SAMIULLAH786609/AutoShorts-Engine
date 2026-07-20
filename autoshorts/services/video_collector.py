@@ -128,8 +128,8 @@ def _select_best_pixabay_file(hit: dict[str, Any]) -> str | None:
     """Select the best video URL from a Pixabay video hit."""
     videos = hit.get("videos", {})
 
-    # Preference order by quality
-    for quality in ("large", "medium", "small", "tiny"):
+    # Preference order by quality (prefer medium/small for 512MB RAM server limit)
+    for quality in ("medium", "small", "tiny"):
         entry = videos.get(quality, {})
         url = entry.get("url", "")
         if url:
