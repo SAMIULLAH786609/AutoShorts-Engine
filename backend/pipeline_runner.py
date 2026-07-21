@@ -276,21 +276,17 @@ def run_pipeline_for_user(
     finally:
         # ── Step 12: Cleanup ALL temp and output files to prevent disk leak ──
         import shutil
+        # Delete the entire user temp, output, and thumbnail directories to completely zero out disk usage
         try:
-            # Delete download assets folder
             shutil.rmtree(user_dir, ignore_errors=True)
         except Exception:
             pass
         try:
-            # Delete final rendered video file
-            if video_path and video_path.exists():
-                video_path.unlink(missing_ok=True)
+            shutil.rmtree(output_dir, ignore_errors=True)
         except Exception:
             pass
         try:
-            # Delete generated thumbnail file
-            if thumb_path and thumb_path.exists():
-                thumb_path.unlink(missing_ok=True)
+            shutil.rmtree(thumb_dir, ignore_errors=True)
         except Exception:
             pass
 
