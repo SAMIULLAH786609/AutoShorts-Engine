@@ -98,6 +98,7 @@ def run_pipeline_for_user(
     user:    User,
     channel: YouTubeChannel,
     db:      Session,
+    job_id:  str | None = None,
 ) -> dict[str, Any]:
     """
     Run the complete video generation pipeline for one user.
@@ -112,6 +113,15 @@ def run_pipeline_for_user(
     from autoshorts.services.video_collector import collect_scene_videos
     from autoshorts.services.renderer        import render_short
     from autoshorts.services.thumbnail_generator import generate_thumbnail
+
+    def check_cancelled():
+        if not job_id:
+            return
+        from backend.models import VideoJob
+        db.expire_all()
+        j = db.query(VideoJob).filter(VideoJob.id == job_id).first()
+        if j and j.status == "failed" and "Cancelled" in (j.error_message or ""):
+            raise RuntimeError("Cancelled by user")
 
     # ── Override pipeline config with user preferences ───────
     os.environ["CHANNEL_NICHE"]    = user.channel_niche or "Interesting facts and viral stories"
@@ -133,11 +143,13 @@ def run_pipeline_for_user(
 
     try:
         # ── Step 1: Collect trends ────────────────────────────────
+        check_cancelled()
         trends = collect_worldwide_trends()
         if not trends:
             raise RuntimeError("No trend data available from any source")
 
         # ── Step 2: Select a fresh topic ─────────────────────────
+        check_cancelled()
         used = _get_used_topics(user.id, db)
 
         ideas = generate_topic_ideas(
@@ -164,12 +176,15 @@ def run_pipeline_for_user(
         style = selected.style
 
         # ── Step 3: Research ──────────────────────────────────────
+        check_cancelled()
         research = research_topic(topic)
 
         # ── Step 4: Generate video plan ───────────────────────────
+        check_cancelled()
         plan = generate_video_plan(topic=topic, style=style, research_summary=research)
 
         # ── Step 5: Generate voice ────────────────────────────────
+        check_cancelled()
         import re
         safe_name  = re.sub(r'[<>:"/\\|?*\s]', "_", plan.title)[:50]
         audio_path = user_dir / f"{safe_name}_voice.mp3"
@@ -184,11 +199,13 @@ def run_pipeline_for_user(
         )
 
         # ── Step 6: Collect videos ────────────────────────────────
+        check_cancelled()
         # Limit to a maximum of 3 keywords to prevent high RAM usage in MoviePy
         limited_keywords = plan.keywords[:3] if plan.keywords else []
         video_paths = collect_scene_videos(limited_keywords, output_dir=user_dir)
 
         # ── Step 7: Render ────────────────────────────────────────
+        check_cancelled()
         video_path = output_dir / f"{safe_name}_{timestamp}.mp4"
         render_short(
             script      = plan.script,
@@ -198,6 +215,7 @@ def run_pipeline_for_user(
         )
 
         # ── Step 8: Thumbnail ─────────────────────────────────────
+        check_cancelled()
         thumb_path = thumb_dir / f"{safe_name}.jpg"
         try:
             from autoshorts.services.thumbnail_generator import generate_thumbnail
@@ -210,6 +228,7 @@ def run_pipeline_for_user(
             thumb_path = None
 
         # ── Step 9: Upload to Cloudinary ──────────────────────────
+        check_cancelled()
         video_url = ""
         thumb_url = ""
 

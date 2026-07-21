@@ -150,6 +150,39 @@ def trigger_job(
     return job
 
 
+# ── Cancel / Stop job ──────────────────────────────────────────
+
+@router.post("/{job_id}/cancel", response_model=JobResponse)
+def cancel_job(
+    job_id:       str,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    """Cancel a running or pending video generation job (or reset a stuck one)."""
+    job = (
+        db.query(VideoJob)
+        .filter(VideoJob.id == job_id, VideoJob.user_id == current_user.id)
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status not in ("running", "pending"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel a job with status '{job.status}'",
+        )
+
+    # Update database status to failed to unblock the user immediately
+    job.status        = "failed"
+    job.error_message = "Cancelled by user."
+    job.completed_at  = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+
+    return job
+
+
 # ── Delete job ────────────────────────────────────────────────
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -201,7 +234,7 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
 
         # Run the pipeline
         from backend.pipeline_runner import run_pipeline_for_user
-        result = run_pipeline_for_user(user=user, channel=channel, db=db)
+        result = run_pipeline_for_user(user=user, channel=channel, db=db, job_id=job.id)
 
         # Update job with results
         job.status           = "complete"

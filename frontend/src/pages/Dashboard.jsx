@@ -58,6 +58,19 @@ export default function Dashboard() {
     }
   }
 
+  const handleCancelJob = async (jobId) => {
+    if (!window.confirm("Are you sure you want to stop this video generation?")) return
+    setError('')
+    setSuccess('')
+    try {
+      await api.post(`/jobs/${jobId}/cancel`)
+      setSuccess('⏹️ Video generation stopped successfully.')
+      await fetchStats()
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to stop video generation')
+    }
+  }
+
   if (loading) return (
     <div className="app-layout">
       <Sidebar />
@@ -152,6 +165,7 @@ export default function Dashboard() {
                   <th>Trigger</th>
                   <th>YouTube</th>
                   <th>Created</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -176,6 +190,17 @@ export default function Dashboard() {
                     </td>
                     <td style={{fontSize:12,color:'#9898b0', whiteSpace:'nowrap'}}>
                       {new Date(job.created_at).toLocaleString()}
+                    </td>
+                    <td>
+                      {(job.status === 'running' || job.status === 'pending') && (
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={() => handleCancelJob(job.id)}
+                          style={{padding: '4px 8px', fontSize: '11px', minHeight: 'auto', height: 'auto', lineHeight: 'normal'}}
+                        >
+                          Stop
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
