@@ -31,6 +31,24 @@ async def lifespan(app: FastAPI):
     init_db()
     log.info("Database tables ready")
 
+    # Clean temporary directories on startup to prevent storage build-up
+    try:
+        import shutil
+        from config import DOWNLOAD_DIR, OUTPUT_DIR, THUMBNAIL_DIR
+        for folder in (DOWNLOAD_DIR, OUTPUT_DIR, THUMBNAIL_DIR):
+            if folder.exists():
+                for item in folder.iterdir():
+                    try:
+                        if item.is_file():
+                            item.unlink()
+                        elif item.is_dir():
+                            shutil.rmtree(item)
+                    except Exception:
+                        pass
+        log.info("Temporary directories cleaned up on startup")
+    except Exception as exc:
+        log.warning("Startup cleanup failed: %s", exc)
+
     # Start the background scheduler (runs jobs every minute)
     from backend.scheduler import start_scheduler
     start_scheduler()
