@@ -25,8 +25,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 OUTPUT_DIR = BASE_DIR / "output"
 
-VIDEO_WIDTH = 1080
-VIDEO_HEIGHT = 1920
+VIDEO_WIDTH = 720
+VIDEO_HEIGHT = 1280
 FPS = 30
 VOICE = "en-US-AriaNeural"
 GEMINI_MODEL = "gemini-3.5-flash"
@@ -297,7 +297,7 @@ def download_background_videos(keywords: list[str]) -> list[Path]:
     return paths
 
 
-def fit_vertical(clip: VideoFileClip) -> VideoFileClip:
+def fit_vertical(clip: VideoFileClip, clips_to_close: list) -> VideoFileClip:
     """Resize and crop a video to fill 1080x1920."""
     target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
     clip_ratio = clip.w / clip.h
@@ -308,18 +308,22 @@ def fit_vertical(clip: VideoFileClip) -> VideoFileClip:
     else:
         # Video is too narrow: match width, then crop height.
         resized = clip.resized(width=VIDEO_WIDTH)
+    clips_to_close.append(resized)
 
-    return resized.cropped(
+    cropped = resized.cropped(
         x_center=resized.w / 2,
         y_center=resized.h / 2,
         width=VIDEO_WIDTH,
         height=VIDEO_HEIGHT,
     )
+    clips_to_close.append(cropped)
+    return cropped
 
 
 def build_background(
     video_paths: list[Path],
     required_duration: float,
+    clips_to_close: list,
 ) -> VideoFileClip:
     """Join enough stock-video segments to cover the narration."""
     opened_clips: list[VideoFileClip] = []
@@ -327,7 +331,9 @@ def build_background(
 
     try:
         for path in video_paths:
-            opened_clips.append(VideoFileClip(str(path)).without_audio())
+            clip = VideoFileClip(str(path)).without_audio()
+            opened_clips.append(clip)
+            clips_to_close.append(clip)
 
         if not opened_clips:
             raise RuntimeError("No valid video clips could be opened.")
@@ -343,22 +349,26 @@ def build_background(
 
             if source.duration >= use_duration:
                 segment = source.subclipped(0, use_duration)
+                clips_to_close.append(segment)
             else:
                 repeats = int(use_duration // source.duration) + 1
                 repeated = concatenate_videoclips(
                     [source] * repeats,
-                    method="compose",
+                    method="chain",
                 )
+                clips_to_close.append(repeated)
                 segment = repeated.subclipped(0, use_duration)
+                clips_to_close.append(segment)
 
-            final_segments.append(fit_vertical(segment))
+            final_segments.append(fit_vertical(segment, clips_to_close))
             current_duration += use_duration
             index += 1
 
         background = concatenate_videoclips(
             final_segments,
-            method="compose",
+            method="chain",
         ).with_duration(required_duration)
+        clips_to_close.append(background)
 
         return background
 
@@ -417,6 +427,7 @@ def split_script_for_subtitles(
 def create_subtitle_clips(
     script: str,
     total_duration: float,
+    clips_to_close: list,
 ) -> list[TextClip]:
     """Create styled subtitle clips near the bottom of the video."""
     if not Path(FONT_PATH).exists():
@@ -428,23 +439,30 @@ def create_subtitle_clips(
     subtitle_items = split_script_for_subtitles(script, total_duration)
     clips: list[TextClip] = []
 
+    # Calculate dynamic layout properties based on video dimensions
+    font_size = int(42 * (VIDEO_WIDTH / 720))
+    stroke_width = int(3 * (VIDEO_WIDTH / 720))
+    subtitle_width = int(VIDEO_WIDTH * 0.85)
+    subtitle_y = int(VIDEO_HEIGHT * 0.75)
+
     for start, end, text in subtitle_items:
         subtitle = (
             TextClip(
                 font=FONT_PATH,
                 text=text,
-                font_size=64,
+                font_size=font_size,
                 color="white",
                 stroke_color="black",
-                stroke_width=5,
+                stroke_width=stroke_width,
                 method="caption",
-                size=(920, None),
+                size=(subtitle_width, None),
                 text_align="center",
             )
             .with_start(start)
             .with_duration(end - start)
-            .with_position(("center", 1450))
+            .with_position(("center", subtitle_y))
         )
+        clips_to_close.append(subtitle)
         clips.append(subtitle)
 
     return clips
@@ -461,37 +479,38 @@ def make_final_video(
     background = None
     final = None
     subtitles: list[TextClip] = []
+    clips_to_close = [audio]
 
     try:
         duration = audio.duration
-        background = build_background(video_paths, duration)
-        subtitles = create_subtitle_clips(script, duration)
+        background = build_background(video_paths, duration, clips_to_close)
+        subtitles = create_subtitle_clips(script, duration, clips_to_close)
 
         final = CompositeVideoClip(
             [background, *subtitles],
             size=(VIDEO_WIDTH, VIDEO_HEIGHT),
         ).with_audio(audio)
+        clips_to_close.append(final)
 
+        # Use threads=1 and preset=superfast to minimize memory usage
         final.write_videofile(
             str(output_path),
             fps=FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
-            threads=4,
+            preset="superfast",
+            threads=1,
         )
 
     finally:
-        if final is not None:
-            final.close()
-
-        if background is not None:
-            background.close()
-
-        for subtitle in subtitles:
-            subtitle.close()
-
-        audio.close()
+        for clip in clips_to_close:
+            try:
+                clip.close()
+            except Exception:
+                pass
+        
+        import gc
+        gc.collect()
 
 
 def safe_filename(text: str) -> str:

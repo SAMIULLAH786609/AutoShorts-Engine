@@ -96,8 +96,8 @@ VOICE_URDU_MALE      = os.getenv("VOICE_URDU_MALE",       "ur-PK-AsadNeural")
 # Video renderer settings
 # ---------------------------------------------------------------------------
 
-VIDEO_WIDTH  = int(os.getenv("VIDEO_WIDTH",  "1080"))
-VIDEO_HEIGHT = int(os.getenv("VIDEO_HEIGHT", "1920"))
+VIDEO_WIDTH  = int(os.getenv("VIDEO_WIDTH",  "720"))
+VIDEO_HEIGHT = int(os.getenv("VIDEO_HEIGHT", "1280"))
 VIDEO_FPS    = int(os.getenv("VIDEO_FPS",    "30"))
 
 # Windows default bold font — update if running on Linux/Mac

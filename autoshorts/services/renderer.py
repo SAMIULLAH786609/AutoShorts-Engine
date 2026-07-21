@@ -49,14 +49,16 @@ log = get_logger("renderer")
 # Constants
 # ---------------------------------------------------------------------------
 
-SUBTITLE_FONT_SIZE   = 62
 SUBTITLE_COLOR       = "white"
 SUBTITLE_STROKE      = "black"
-SUBTITLE_STROKE_W    = 4
-SUBTITLE_Y_POS       = 1450          # pixels from top
-SUBTITLE_WIDTH       = 920           # text box width in pixels
 WORDS_PER_CHUNK      = 6             # words per subtitle card
 MIN_CHUNK_DURATION   = 0.6           # seconds
+
+# Dynamically scaled subtitles relative to dimensions
+SUBTITLE_FONT_SIZE   = int(42 * (VIDEO_WIDTH / 720))
+SUBTITLE_STROKE_W    = int(3 * (VIDEO_WIDTH / 720))
+SUBTITLE_Y_POS       = int(VIDEO_HEIGHT * 0.75)      # pixels from top
+SUBTITLE_WIDTH       = int(VIDEO_WIDTH * 0.85)       # text box width in pixels
 
 # Colour palette for highlighted words (TikTok style)
 _HIGHLIGHT_COLORS = ["#FFFF00", "#FF6B6B", "#4ECDC4", "#FFE66D", "#A8E6CF"]
@@ -66,7 +68,7 @@ _HIGHLIGHT_COLORS = ["#FFFF00", "#FF6B6B", "#4ECDC4", "#FFE66D", "#A8E6CF"]
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def _fit_vertical(clip: VideoFileClip) -> VideoFileClip:
+def _fit_vertical(clip: VideoFileClip, clips_to_close: list) -> VideoFileClip:
     """Resize and centre-crop a clip to exactly VIDEO_WIDTH × VIDEO_HEIGHT."""
     target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
     clip_ratio   = clip.w / clip.h
@@ -75,13 +77,16 @@ def _fit_vertical(clip: VideoFileClip) -> VideoFileClip:
         resized = clip.resized(height=VIDEO_HEIGHT)
     else:
         resized = clip.resized(width=VIDEO_WIDTH)
+    clips_to_close.append(resized)
 
-    return resized.cropped(
+    cropped = resized.cropped(
         x_center=resized.w / 2,
         y_center=resized.h / 2,
         width=VIDEO_WIDTH,
         height=VIDEO_HEIGHT,
     )
+    clips_to_close.append(cropped)
+    return cropped
 
 
 def _apply_zoom(clip: VideoFileClip, zoom_factor: float = 1.04) -> VideoFileClip:
@@ -112,6 +117,7 @@ def _apply_zoom(clip: VideoFileClip, zoom_factor: float = 1.04) -> VideoFileClip
 def _build_background(
     video_paths: list[Path],
     required_duration: float,
+    clips_to_close: list,
 ) -> VideoFileClip:
     """
     Assemble stock clips into one background track matching required_duration.
@@ -128,6 +134,7 @@ def _build_background(
         try:
             clip = VideoFileClip(str(path)).without_audio()
             opened.append(clip)
+            clips_to_close.append(clip)
         except Exception as exc:
             log.warning("Could not open clip %s: %s", path.name, exc)
 
@@ -146,25 +153,23 @@ def _build_background(
 
         if source.duration >= use_dur:
             seg = source.subclipped(0, use_dur)
+            clips_to_close.append(seg)
         else:
             repeats = int(use_dur // source.duration) + 1
-            seg = concatenate_videoclips(
-                [source] * repeats, method="compose"
-            ).subclipped(0, use_dur)
+            repeated = concatenate_videoclips(
+                [source] * repeats, method="chain"
+            )
+            clips_to_close.append(repeated)
+            seg = repeated.subclipped(0, use_dur)
+            clips_to_close.append(seg)
 
-        seg = _fit_vertical(seg)
+        seg = _fit_vertical(seg, clips_to_close)
         segments.append(seg)
         current += use_dur
         idx += 1
 
-    background = concatenate_videoclips(segments, method="compose")
-
-    # Close originals
-    for clip in opened:
-        try:
-            clip.close()
-        except Exception:
-            pass
+    background = concatenate_videoclips(segments, method="chain")
+    clips_to_close.append(background)
 
     return background.with_duration(required_duration)
 
@@ -212,6 +217,7 @@ def _chunk_script(
 def _build_subtitle_clips(
     script: str,
     total_duration: float,
+    clips_to_close: list,
 ) -> list[TextClip]:
     """
     Build a list of styled TextClip subtitle cards.
@@ -252,6 +258,7 @@ def _build_subtitle_clips(
                 .with_duration(end - start)
                 .with_position(("center", SUBTITLE_Y_POS))
             )
+            clips_to_close.append(tc)
             clips.append(tc)
         except Exception as exc:
             log.warning("Subtitle clip failed for '%s': %s", text[:20], exc)
@@ -303,16 +310,17 @@ def render_short(
 
     log.info("Narration duration: %.2f seconds", total_duration)
 
+    clips_to_close = [narration]
     background = None
     subtitles: list[TextClip] = []
     final = None
 
     try:
         # 1 — Background
-        background = _build_background(video_paths, total_duration)
+        background = _build_background(video_paths, total_duration, clips_to_close)
 
         # 2 — Subtitles
-        subtitles = _build_subtitle_clips(script, total_duration)
+        subtitles = _build_subtitle_clips(script, total_duration, clips_to_close)
 
         # 3 — Composite
         layers = [background, *subtitles]
@@ -321,6 +329,7 @@ def render_short(
             layers,
             size=(VIDEO_WIDTH, VIDEO_HEIGHT),
         ).with_audio(narration)
+        clips_to_close.append(final)
 
         # 4 — Optional background music (ducked to 10% volume)
         if bg_music_path is None:
@@ -333,10 +342,13 @@ def render_short(
                     .subclipped(0, total_duration)
                     .with_volume_scaled(0.08)
                 )
+                clips_to_close.append(music)
                 from moviepy import CompositeAudioClip
-                final = final.with_audio(
-                    CompositeAudioClip([narration, music])
-                )
+                comp_audio = CompositeAudioClip([narration, music])
+                clips_to_close.append(comp_audio)
+                
+                final = final.with_audio(comp_audio)
+                clips_to_close.append(final)
                 log.info("Background music added: %s", bg_music_path.name)
             except Exception as exc:
                 log.warning("Background music failed (skipping): %s", exc)
@@ -370,25 +382,12 @@ def render_short(
         )
 
     finally:
-        if final is not None:
-            try:
-                final.close()
-            except Exception:
-                pass
-
-        if background is not None:
-            try:
-                background.close()
-            except Exception:
-                pass
-
-        for clip in subtitles:
+        log.info("Closing %d video and audio clips to release memory...", len(clips_to_close))
+        for clip in clips_to_close:
             try:
                 clip.close()
             except Exception:
                 pass
-
-        narration.close()
         
         # Explicit garbage collection to free memory on 512MB RAM server
         import gc

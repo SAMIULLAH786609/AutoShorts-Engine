@@ -326,11 +326,20 @@ def _upload_to_youtube(
         },
     }
 
-    media = MediaFileUpload(str(video_path), mimetype="video/mp4", resumable=True)
-    response = youtube.videos().insert(
+    media = MediaFileUpload(
+        str(video_path),
+        mimetype="video/mp4",
+        chunksize=5 * 1024 * 1024,  # 5MB chunks
+        resumable=True,
+    )
+    request = youtube.videos().insert(
         part       = "snippet,status",
         body       = request_body,
         media_body = media,
-    ).execute()
+    )
+
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
 
     return response["id"]

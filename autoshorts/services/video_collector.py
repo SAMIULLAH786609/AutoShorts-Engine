@@ -83,8 +83,8 @@ def _select_best_pexels_file(video: dict[str, Any]) -> str | None:
     portrait = [f for f in mp4 if (f.get("height") or 0) > (f.get("width") or 0)]
     candidates = portrait or mp4
 
-    # Prefer height closest to 960 px (safer for 512MB RAM limits)
-    candidates.sort(key=lambda f: abs((f.get("height") or 720) - 960))
+    # Prefer height closest to 720 px (safer for 512MB RAM/storage limits)
+    candidates.sort(key=lambda f: abs((f.get("height") or 720) - 720))
 
     return candidates[0]["link"] if candidates else None
 

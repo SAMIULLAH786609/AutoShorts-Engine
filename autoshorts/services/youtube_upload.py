@@ -121,7 +121,7 @@ def upload_video(
     media = MediaFileUpload(
         str(video_path),
         mimetype="video/mp4",
-        chunksize=-1,
+        chunksize=5 * 1024 * 1024,  # 5MB chunks
         resumable=True,
     )
 
@@ -133,7 +133,12 @@ def upload_video(
 
     log.info("Uploading '%s' to YouTube (%s)…", title[:60], privacy_status)
 
-    response = request.execute()
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            log.info("Upload progress: %d%%", int(status.progress() * 100))
+
     video_id = response["id"]
 
     log.info(

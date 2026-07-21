@@ -223,8 +223,10 @@ def _step_generate_voice(plan: VideoPlan, audio_path: Path) -> Path:
 
 def _step_collect_videos(plan: VideoPlan) -> list[Path]:
     log_step(log, "VIDEO COLLECTION", "Downloading copyright-safe clips…")
+    # Limit to a maximum of 3 keywords to keep storage and memory footprint small
+    limited_keywords = plan.keywords[:3] if plan.keywords else []
     return _retry(
-        lambda: collect_scene_videos(plan.keywords),
+        lambda: collect_scene_videos(limited_keywords),
         label="Video collection",
     )
 
