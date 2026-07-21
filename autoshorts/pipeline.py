@@ -348,6 +348,7 @@ def run_pipeline() -> VideoResult:
     plan: VideoPlan | None = None
     audio_path: Path | None = None
     video_path: Path | None = None
+    thumbnail_path: Path | None = None
 
     log_step(log, "PIPELINE START", f"AutoShorts Engine — {timestamp}")
 
@@ -390,9 +391,6 @@ def run_pipeline() -> VideoResult:
             youtube_video_id, trends,
         )
 
-        # 11. Clean temp files
-        _clean_downloads()
-
         log_step(
             log,
             "PIPELINE COMPLETE",
@@ -433,6 +431,20 @@ def run_pipeline() -> VideoResult:
             details=repr(exc),
         )
         raise PipelineError(f"Unexpected error: {exc}") from exc
+
+    finally:
+        # Wipe all files from temporary folders to guarantee 0MB usage
+        _clean_downloads()
+        try:
+            if video_path and video_path.exists():
+                video_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            if thumbnail_path and thumbnail_path.exists():
+                thumbnail_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def run_daily_batch(count: int = DAILY_VIDEO_COUNT) -> list[VideoResult]:
