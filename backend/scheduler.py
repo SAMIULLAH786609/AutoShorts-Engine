@@ -50,8 +50,8 @@ def stop_scheduler() -> None:
 
 def _check_and_fire_scheduled_jobs() -> None:
     """
-    Called every minute. Checks every active user's schedule.
-    If the current UTC time matches a time slot, enqueue a video job.
+    Called every minute (or upon server wake-up). Checks every active user's schedule.
+    Fires video generation for any time slot that is due today and has not yet run.
     """
     from backend.database import SessionLocal
     from backend.models import User, UserSchedule, YouTubeChannel, VideoJob
@@ -61,6 +61,7 @@ def _check_and_fire_scheduled_jobs() -> None:
     try:
         now_utc  = datetime.now(timezone.utc)
         now_time = now_utc.strftime("%H:%M")   # e.g. "09:00"
+        today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Get all users with active schedules
         schedules = (
@@ -74,40 +75,43 @@ def _check_and_fire_scheduled_jobs() -> None:
             if not user or not user.is_active:
                 continue
 
-            # Check if current time matches any of the user's slots
+            max_videos = schedule.videos_per_day or 3
             slots = [schedule.time_slot_1, schedule.time_slot_2, schedule.time_slot_3]
-            active_slots = [s for s in slots if s]
+            active_slots = [s for s in slots[:max_videos] if s]
 
-            if now_time not in active_slots:
+            # Find slots that are due today up to the current time
+            due_slots = [s for s in active_slots if now_time >= s]
+            if not due_slots:
                 continue
 
-            # Check if we already created a job for this user at this time today
-            today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-            already_fired = (
+            # Check scheduled jobs already created today for this user
+            today_jobs = (
                 db.query(VideoJob)
                 .filter(
                     VideoJob.user_id   == user.id,
                     VideoJob.trigger   == "scheduled",
                     VideoJob.created_at >= today_start,
                     VideoJob.status.in_(["pending", "running", "complete"]),
-                    # Count only jobs for this specific time slot today
                 )
                 .count()
             )
 
-            # Don't exceed daily limit
-            if already_fired >= (schedule.videos_per_day or 3):
+            # If we've already fired jobs for all currently due slots, skip
+            if today_jobs >= len(due_slots):
                 continue
 
-            # Check if a job is already running
+            # Check if a job is currently pending or running
             running = (
                 db.query(VideoJob)
-                .filter(VideoJob.user_id == user.id, VideoJob.status == "running")
+                .filter(
+                    VideoJob.user_id == user.id,
+                    VideoJob.status.in_(["pending", "running"]),
+                )
                 .first()
             )
             if running:
                 log.info(
-                    "Skipping schedule for user %s — a job is already running", user.id
+                    "Skipping schedule for user %s — a job is currently pending/running", user.id
                 )
                 continue
 
@@ -137,8 +141,8 @@ def _check_and_fire_scheduled_jobs() -> None:
             db.refresh(job)
 
             log.info(
-                "Scheduled job created for user %s at slot %s (job id: %s)",
-                user.email, now_time, job.id,
+                "Scheduled job created for user %s at current time %s for due slots %d (job id: %s)",
+                user.email, now_time, len(due_slots), job.id,
             )
 
             # Fire the pipeline in a new thread to avoid blocking the scheduler
