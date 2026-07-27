@@ -10,13 +10,21 @@ const STATUS_BADGE = {
   pending:  <span className="badge badge-info">◷ Pending</span>,
 }
 
+function fmtNum(n) {
+  if (n == null || n === 0) return '—'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
 export default function Dashboard() {
-  const [stats, setStats]     = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [stats, setStats]         = useState(null)
+  const [loading, setLoading]     = useState(true)
   const [triggering, setTriggering] = useState(false)
-  const [error, setError]     = useState('')
-  const [success, setSuccess] = useState('')
-  const navigate              = useNavigate()
+  const [refreshing, setRefreshing] = useState({})
+  const [error, setError]         = useState('')
+  const [success, setSuccess]     = useState('')
+  const navigate                  = useNavigate()
 
   const fetchStats = useCallback(async () => {
     try {
@@ -68,6 +76,22 @@ export default function Dashboard() {
       await fetchStats()
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to stop video generation')
+    }
+  }
+
+  const handleRefreshStats = async (jobId) => {
+    setRefreshing(r => ({ ...r, [jobId]: true }))
+    try {
+      const res = await api.post(`/jobs/${jobId}/refresh-stats`)
+      // Update the job in local state without full reload
+      setStats(prev => ({
+        ...prev,
+        recent_jobs: prev.recent_jobs.map(j => j.id === jobId ? res.data : j),
+      }))
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
+    } finally {
+      setRefreshing(r => ({ ...r, [jobId]: false }))
     }
   }
 
@@ -164,6 +188,9 @@ export default function Dashboard() {
                   <th>Status</th>
                   <th>Trigger</th>
                   <th>YouTube</th>
+                  <th style={{textAlign:'center'}}>👁 Views</th>
+                  <th style={{textAlign:'center'}}>👍 Likes</th>
+                  <th style={{textAlign:'center'}}>💬 Comments</th>
                   <th>Created</th>
                   <th>Actions</th>
                 </tr>
@@ -171,7 +198,7 @@ export default function Dashboard() {
               <tbody>
                 {stats.recent_jobs.map(job => (
                   <tr key={job.id}>
-                    <td style={{maxWidth:280}}>
+                    <td style={{maxWidth:240}}>
                       <div style={{fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
                         {job.title || job.topic || '—'}
                       </div>
@@ -188,17 +215,40 @@ export default function Dashboard() {
                         : <span style={{color:'#5a5a70', fontSize:13}}>—</span>
                       }
                     </td>
+                    {/* YouTube live stats */}
+                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_views ? '#a78bfa' : '#5a5a70', fontSize:13}}>
+                      {fmtNum(job.yt_views)}
+                    </td>
+                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_likes ? '#22c55e' : '#5a5a70', fontSize:13}}>
+                      {fmtNum(job.yt_likes)}
+                    </td>
+                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_comments ? '#f59e0b' : '#5a5a70', fontSize:13}}>
+                      {fmtNum(job.yt_comments)}
+                    </td>
                     <td style={{fontSize:12,color:'#9898b0', whiteSpace:'nowrap'}}>
                       {new Date(job.created_at).toLocaleString()}
                     </td>
-                    <td>
+                    <td style={{display:'flex', gap:4, alignItems:'center'}}>
+                      {/* Stop button for active jobs */}
                       {(job.status === 'running' || job.status === 'pending') && (
                         <button
                           className="btn btn-danger btn-sm"
                           onClick={() => handleCancelJob(job.id)}
-                          style={{padding: '4px 8px', fontSize: '11px', minHeight: 'auto', height: 'auto', lineHeight: 'normal'}}
+                          style={{padding:'4px 8px', fontSize:'11px', minHeight:'auto', height:'auto', lineHeight:'normal'}}
                         >
-                          Stop
+                          ■ Stop
+                        </button>
+                      )}
+                      {/* Refresh stats button for uploaded videos */}
+                      {job.status === 'complete' && job.youtube_video_id && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => handleRefreshStats(job.id)}
+                          disabled={refreshing[job.id]}
+                          title="Refresh YouTube stats"
+                          style={{padding:'4px 8px', fontSize:'11px', minHeight:'auto', height:'auto', lineHeight:'normal'}}
+                        >
+                          {refreshing[job.id] ? <span className="spinner" style={{width:12,height:12}} /> : '↻'}
                         </button>
                       )}
                     </td>

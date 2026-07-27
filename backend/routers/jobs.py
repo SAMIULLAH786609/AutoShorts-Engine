@@ -183,7 +183,50 @@ def cancel_job(
     return job
 
 
-# ── Delete job ────────────────────────────────────────────────
+# ── Refresh YouTube Stats ─────────────────────────────────────
+
+@router.post("/{job_id}/refresh-stats", response_model=JobResponse)
+def refresh_yt_stats(
+    job_id:       str,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    """Fetch latest views, likes, comments from YouTube Data API and save them."""
+    job = (
+        db.query(VideoJob)
+        .filter(VideoJob.id == job_id, VideoJob.user_id == current_user.id)
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.youtube_video_id:
+        raise HTTPException(status_code=400, detail="No YouTube video ID for this job")
+
+    # Get the user's connected channel to build OAuth credentials
+    channel = (
+        db.query(YouTubeChannel)
+        .filter(YouTubeChannel.user_id == current_user.id, YouTubeChannel.is_connected == True)
+        .first()
+    )
+    if not channel:
+        raise HTTPException(status_code=400, detail="No connected YouTube channel")
+
+    try:
+        from backend.youtube_stats import fetch_video_stats
+        stats = fetch_video_stats(channel=channel, video_id=job.youtube_video_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"YouTube API error: {exc}")
+
+    job.yt_views         = stats.get("views", 0)
+    job.yt_likes         = stats.get("likes", 0)
+    job.yt_comments      = stats.get("comments", 0)
+    job.yt_stats_updated = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+
+    return job
+
+
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_job(

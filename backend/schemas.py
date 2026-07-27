@@ -120,6 +120,11 @@ class JobResponse(BaseModel):
     created_at:       datetime
     started_at:       Optional[datetime]
     completed_at:     Optional[datetime]
+    # YouTube live stats
+    yt_views:         Optional[int] = 0
+    yt_likes:         Optional[int] = 0
+    yt_comments:      Optional[int] = 0
+    yt_stats_updated: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 

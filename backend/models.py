@@ -125,6 +125,12 @@ class VideoJob(Base):
     youtube_video_id = Column(String(50),  nullable=True)
     youtube_url      = Column(String(200), nullable=True)
 
+    # YouTube stats (refreshed on demand)
+    yt_views         = Column(Integer, default=0, nullable=True)
+    yt_likes         = Column(Integer, default=0, nullable=True)
+    yt_comments      = Column(Integer, default=0, nullable=True)
+    yt_stats_updated = Column(DateTime(timezone=True), nullable=True)
+
     # Error tracking
     error_message    = Column(Text, nullable=True)
     retry_count      = Column(Integer, default=0)

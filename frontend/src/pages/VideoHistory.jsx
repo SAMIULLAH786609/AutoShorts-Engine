@@ -9,12 +9,20 @@ const STATUS_BADGE = {
   pending:  <span className="badge badge-info">◷ Pending</span>,
 }
 
+function fmtNum(n) {
+  if (n == null || n === 0) return '—'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
 export default function VideoHistory() {
-  const [jobs, setJobs]       = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState('')
-  const [page, setPage]       = useState(1)
-  const [hasMore, setHasMore] = useState(true)
+  const [jobs, setJobs]           = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState('')
+  const [page, setPage]           = useState(1)
+  const [hasMore, setHasMore]     = useState(true)
+  const [refreshing, setRefreshing] = useState({})
 
   const fetchJobs = useCallback(async (pageNum) => {
     try {
@@ -24,11 +32,7 @@ export default function VideoHistory() {
       } else {
         setJobs(prev => [...prev, ...r.data])
       }
-      if (r.data.length < 15) {
-        setHasMore(false)
-      } else {
-        setHasMore(true)
-      }
+      setHasMore(r.data.length >= 15)
     } catch {
       setError('Failed to load video history')
     } finally {
@@ -36,13 +40,9 @@ export default function VideoHistory() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchJobs(page)
-  }, [page, fetchJobs])
+  useEffect(() => { fetchJobs(page) }, [page, fetchJobs])
 
-  const handleLoadMore = () => {
-    setPage(p => p + 1)
-  }
+  const handleLoadMore = () => setPage(p => p + 1)
 
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this job record?')) return
@@ -54,13 +54,26 @@ export default function VideoHistory() {
     }
   }
 
+  const handleRefreshStats = async (jobId) => {
+    setRefreshing(r => ({ ...r, [jobId]: true }))
+    setError('')
+    try {
+      const res = await api.post(`/jobs/${jobId}/refresh-stats`)
+      setJobs(prev => prev.map(j => j.id === jobId ? res.data : j))
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
+    } finally {
+      setRefreshing(r => ({ ...r, [jobId]: false }))
+    }
+  }
+
   return (
     <div className="app-layout">
       <Sidebar />
       <div className="main-content">
         <div className="page-header">
           <h1 className="page-title">Video History</h1>
-          <p className="page-subtitle">View your generated videos, YouTube uploads, and generation logs</p>
+          <p className="page-subtitle">View your generated videos, YouTube stats, and generation logs</p>
         </div>
 
         {error && <div className="alert alert-error" style={{ marginBottom: 20 }}>{error}</div>}
@@ -86,10 +99,13 @@ export default function VideoHistory() {
               <table>
                 <thead>
                   <tr>
-                    <th>Title & Niche</th>
+                    <th>Title &amp; Niche</th>
                     <th>Status</th>
-                    <th>YouTube Links</th>
-                    <th>Duration & Mode</th>
+                    <th>YouTube</th>
+                    <th style={{textAlign:'center'}}>👁 Views</th>
+                    <th style={{textAlign:'center'}}>👍 Likes</th>
+                    <th style={{textAlign:'center'}}>💬 Comments</th>
+                    <th>Duration &amp; Mode</th>
                     <th>Created At</th>
                     <th>Actions</th>
                   </tr>
@@ -97,7 +113,7 @@ export default function VideoHistory() {
                 <tbody>
                   {jobs.map(job => (
                     <tr key={job.id}>
-                      <td style={{ maxWidth: 300 }}>
+                      <td style={{ maxWidth: 280 }}>
                         <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {job.title || job.topic || '—'}
                         </div>
@@ -125,21 +141,51 @@ export default function VideoHistory() {
                           <span style={{ color: 'var(--text-muted)' }}>Not uploaded</span>
                         )}
                       </td>
+                      {/* YouTube live stats */}
+                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_views ? '#a78bfa' : '#5a5a70', fontSize:14}}>
+                        {fmtNum(job.yt_views)}
+                      </td>
+                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_likes ? '#22c55e' : '#5a5a70', fontSize:14}}>
+                        {fmtNum(job.yt_likes)}
+                      </td>
+                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_comments ? '#f59e0b' : '#5a5a70', fontSize:14}}>
+                        {fmtNum(job.yt_comments)}
+                      </td>
                       <td>
                         <div style={{ fontWeight: 500 }}>{job.duration ? `${job.duration.toFixed(1)}s` : '—'}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
                           Trigger: {job.trigger}
                         </div>
+                        {job.yt_stats_updated && (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                            Stats: {new Date(job.yt_stats_updated).toLocaleString()}
+                          </div>
+                        )}
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                         {new Date(job.created_at).toLocaleString()}
                       </td>
-                      <td>
-                        <button 
-                          className="btn btn-ghost btn-sm btn-icon" 
+                      <td style={{display:'flex', gap:4, alignItems:'center', flexWrap:'wrap'}}>
+                        {/* Refresh stats button for uploaded videos */}
+                        {job.status === 'complete' && job.youtube_video_id && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => handleRefreshStats(job.id)}
+                            disabled={refreshing[job.id]}
+                            title="Refresh YouTube stats (views, likes, comments)"
+                            style={{padding:'4px 8px', fontSize:'11px', minHeight:'auto', height:'auto', lineHeight:'normal'}}
+                          >
+                            {refreshing[job.id]
+                              ? <span className="spinner" style={{width:12,height:12}} />
+                              : '↻ Stats'}
+                          </button>
+                        )}
+                        <button
+                          className="btn btn-ghost btn-sm btn-icon"
                           style={{ color: 'var(--red)' }}
                           onClick={() => handleDelete(job.id)}
                           disabled={job.status === 'running'}
+                          title="Delete record"
                         >
                           🗑️
                         </button>
