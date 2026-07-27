@@ -31,6 +31,23 @@ async def lifespan(app: FastAPI):
     init_db()
     log.info("Database tables ready")
 
+    # Run column migrations (safe: only adds missing columns, never drops)
+    try:
+        from backend.database import engine
+        with engine.connect() as conn:
+            migrations = [
+                "ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS yt_views    INTEGER DEFAULT 0",
+                "ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS yt_likes    INTEGER DEFAULT 0",
+                "ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS yt_comments INTEGER DEFAULT 0",
+                "ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS yt_stats_updated TIMESTAMP WITH TIME ZONE",
+            ]
+            for sql in migrations:
+                conn.execute(__import__("sqlalchemy").text(sql))
+            conn.commit()
+        log.info("Column migrations applied successfully")
+    except Exception as exc:
+        log.warning("Column migration warning (safe to ignore if columns already exist): %s", exc)
+
     # Clean temporary directories on startup to prevent storage build-up
     try:
         import shutil
