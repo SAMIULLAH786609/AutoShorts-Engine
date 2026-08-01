@@ -150,7 +150,7 @@ def generate_topic_ideas(
         )
 
     prompt = f"""
-You are a professional short-form video strategist for YouTube Shorts.
+You are a viral YouTube Shorts strategist whose job is to MAXIMIZE views and clicks.
 
 CHANNEL NICHE:
 {niche}
@@ -159,23 +159,33 @@ CURRENT WORLDWIDE TRENDING TOPICS:
 {trends_text}
 {avoid_section}
 
-Generate exactly {count} ORIGINAL, UNIQUE short-video ideas.
+Generate exactly {{count}} ORIGINAL, UNIQUE short-video ideas with MAXIMUM viral potential.
 
-Rules:
-- DO NOT copy any trending title, script, or creator.
-- Use trends only to understand audience interest and emotional patterns.
+Rules for MAXIMUM VIEWS:
+- Each idea must trigger one of: SHOCK, CURIOSITY, DISBELIEF, FEAR, AWE, or LAUGHTER.
+- The topic title itself must make someone STOP scrolling and MUST click.
+- Use the "curiosity gap" technique — hint at something surprising without revealing it.
+- Prioritize topics that people will SHARE because they can't believe it.
 - Each idea must be suitable for a 25–30 second YouTube Short.
-- Prioritize topics with high curiosity, surprise, or emotional engagement.
 - Each idea must be completely different from the others.
-- Score each idea 0–100 for short-form suitability.
+- AVOID generic topics — choose specific, surprising angles.
+- Score each idea 0–100 for viral potential (not just suitability).
+
+High-performing idea patterns:
+- "The REAL reason why [common thing] happens"
+- "[Famous thing] is actually [shocking truth]"
+- "[Number] seconds that will blow your mind"
+- "Why [popular belief] is completely WRONG"
+- "Scientists discovered [shocking fact]"
 
 Return ONLY valid JSON, no extra text:
 
 {{
   "ideas": [
     {{
-      "topic": "clear, specific original topic",
+      "topic": "specific, curiosity-gap original topic",
       "style": "funny | facts | story | educational | motivational",
+      "viral_hook": "one shocking/curiosity sentence that makes people click",
       "trend_reason": "why this resonates with current audiences",
       "original_angle": "what makes this version unique and original",
       "score": 85
@@ -266,7 +276,8 @@ RESEARCH MATERIAL (use as factual source, do NOT copy verbatim):
 """
 
     prompt = f"""
-You are an expert YouTube Shorts writer, retention editor, and SEO strategist.
+You are a viral YouTube Shorts expert whose ONLY goal is MAXIMUM VIEWS and WATCH TIME.
+Every word must earn its place. Boring = viewers scroll away.
 
 TOPIC:
 {topic}
@@ -277,55 +288,61 @@ REQUESTED STYLE:
 
 Create an original vertical short-form video script lasting exactly 25 to 30 seconds.
 
-HOOK RULES:
-- The first sentence MUST capture attention within 3 seconds.
-- Do not begin with greetings like "Hey guys" or "Did you know".
-- Use surprise, curiosity, conflict or humour immediately.
+HOOK RULES (most important — determines 90% of views):
+- First sentence = viewer either STAYS or LEAVES. Make it IMPOSSIBLE to scroll past.
+- Use one of: shocking stat, bold claim, controversial statement, or disbelief statement.
+- NEVER start with: "Hey guys", "Did you know", "Today we'll talk about", "Welcome".
+- Examples of great hooks:
+  * "This is illegal in 47 countries."
+  * "Scientists just found out they were WRONG about this."
+  * "Your brain has been lying to you your entire life."
 
 SCRIPT RULES:
-- STRICTLY 60 to 75 words total (this is critical — 70 words = 30 seconds at speaking pace).
-- Short spoken sentences — no more than 12 words per sentence.
-- Add a pattern interrupt every 2–3 sentences.
-- No filler words.
-- End with a payoff, twist, or call to engagement.
-- Never mention AI, scripts, or that this is a video.
-- Write for spoken narration, not reading.
+- STRICTLY 60 to 75 words total (critical — 70 words = ~30 seconds at narration pace).
+- Short punchy sentences — max 10 words each.
+- Every sentence must ADD VALUE or CREATE CURIOSITY — no padding.
+- Build tension: hook → surprising fact → bigger reveal → payoff.
+- End with: a mind-blowing fact OR "comment below [question]" OR "follow for more".
+- Never say: AI, script, video, channel, subscribe, like.
+- Written for voice narration — must sound natural when spoken.
 
-SEO RULES:
-- Title: accurate, searchable, under 60 characters.
-- Description: 1–2 sentences, keyword-rich.
-- Hashtags: 5–8 relevant tags (no #).
-- Thumbnail text: 3–5 punchy words for the thumbnail overlay.
+SEO RULES (for YouTube algorithm):
+- Title: MUST contain a power word (shocking, secret, real, truth, actually, never, always).
+  Use format: "[Number/Power word] [Topic] [Emotional hook]" — under 60 chars.
+  Examples: "The REAL Reason Planes Never Crash" / "5 Facts That Will Ruin Your Day"
+- Description: 2-3 sentences, include main keyword naturally, end with a question to boost comments.
+- Hashtags: 8 tags — mix of viral (#facts #mindblown #shorts) + niche-specific tags.
+- Thumbnail text: 2-4 SHOCKING CAPITALIZED words that make people click.
 
 VISUAL KEYWORDS:
-- Generate exactly 5 specific visual search phrases.
-- Each phrase should describe visible people, objects, places or actions.
-- Match the phrases to the order of the script scenes.
+- Exactly 5 specific cinematic visual search phrases.
+- Think like a film director: what STRIKING imagery matches each script moment?
+- Examples: "astronaut floating in space closeup", "slow motion water drop impact"
 
 VOICE SELECTION:
-Choose exactly one Edge-TTS voice appropriate for the content:
-- en-US-AriaNeural  (female, energetic, American)
-- en-US-GuyNeural   (male, confident, American)
-- en-GB-SoniaNeural (female, professional, British)
-- ur-PK-UzmaNeural  (female, Urdu)
-- ur-PK-AsadNeural  (male, Urdu)
+Choose the voice that best fits the content energy:
+- en-US-AriaNeural  (female, energetic — best for facts/shocking content)
+- en-US-GuyNeural   (male, confident — best for serious/dramatic content)
+- en-GB-SoniaNeural (female, professional — best for educational)
+- ur-PK-UzmaNeural  (female, Urdu — for Urdu content)
+- ur-PK-AsadNeural  (male, Urdu — for Urdu content)
 
 Return ONLY valid JSON in exactly this format:
 
 {{
-    "title": "SEO title under 60 chars",
-    "hook": "opening sentence — 3-second hook",
-    "script": "complete narration STRICTLY 60-75 words",
+    "title": "CTR-optimized title with power word, under 60 chars",
+    "hook": "jaw-dropping opening sentence — makes viewer stop scrolling",
+    "script": "complete narration STRICTLY 60-75 words — ends with engagement CTA",
     "keywords": [
-        "visual search phrase 1",
-        "visual search phrase 2",
-        "visual search phrase 3",
-        "visual search phrase 4",
-        "visual search phrase 5"
+        "cinematic visual phrase 1",
+        "cinematic visual phrase 2",
+        "cinematic visual phrase 3",
+        "cinematic visual phrase 4",
+        "cinematic visual phrase 5"
     ],
-    "description": "short searchable YouTube description",
-    "hashtags": ["shorts", "tag2", "tag3", "tag4", "tag5"],
-    "thumbnail_text": "3–5 punchy words",
+    "description": "2-3 sentence SEO description ending with a question",
+    "hashtags": ["shorts", "facts", "mindblown", "viral", "tag5", "tag6", "tag7", "tag8"],
+    "thumbnail_text": "2-4 SHOCKING CAPITALIZED WORDS",
     "category": "comedy | facts | education | story | motivation | technology | science | other",
     "voice": "one voice from the allowed list",
     "style": "{style}"
