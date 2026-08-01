@@ -164,7 +164,7 @@ Generate exactly {count} ORIGINAL, UNIQUE short-video ideas.
 Rules:
 - DO NOT copy any trending title, script, or creator.
 - Use trends only to understand audience interest and emotional patterns.
-- Each idea must be suitable for a 40–60 second YouTube Short.
+- Each idea must be suitable for a 25–30 second YouTube Short.
 - Prioritize topics with high curiosity, surprise, or emotional engagement.
 - Each idea must be completely different from the others.
 - Score each idea 0–100 for short-form suitability.
@@ -275,7 +275,7 @@ REQUESTED STYLE:
 {style}
 {research_section}
 
-Create an original vertical short-form video script lasting 40 to 60 seconds.
+Create an original vertical short-form video script lasting exactly 25 to 30 seconds.
 
 HOOK RULES:
 - The first sentence MUST capture attention within 3 seconds.
@@ -283,7 +283,7 @@ HOOK RULES:
 - Use surprise, curiosity, conflict or humour immediately.
 
 SCRIPT RULES:
-- 95 to 135 words total.
+- STRICTLY 60 to 75 words total (this is critical — 70 words = 30 seconds at speaking pace).
 - Short spoken sentences — no more than 12 words per sentence.
 - Add a pattern interrupt every 2–3 sentences.
 - No filler words.
@@ -315,7 +315,7 @@ Return ONLY valid JSON in exactly this format:
 {{
     "title": "SEO title under 60 chars",
     "hook": "opening sentence — 3-second hook",
-    "script": "complete narration 95-135 words",
+    "script": "complete narration STRICTLY 60-75 words",
     "keywords": [
         "visual search phrase 1",
         "visual search phrase 2",
