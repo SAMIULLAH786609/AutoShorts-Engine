@@ -140,9 +140,11 @@ class TriggerJobRequest(BaseModel):
 class ScheduleResponse(BaseModel):
     id:             str
     videos_per_day: int
-    time_slot_1:    str
-    time_slot_2:    str
-    time_slot_3:    str
+    time_slot_1:    Optional[str] = None
+    time_slot_2:    Optional[str] = None
+    time_slot_3:    Optional[str] = None
+    start_time:     Optional[str] = "09:00"
+    end_time:       Optional[str] = "23:00"
     timezone:       str
     is_active:      bool
 
@@ -150,11 +152,14 @@ class ScheduleResponse(BaseModel):
 
 
 class UpdateScheduleRequest(BaseModel):
-    videos_per_day: Optional[int] = Field(None, ge=1, le=10)
-    time_slot_1:    Optional[str] = None
-    time_slot_2:    Optional[str] = None
-    time_slot_3:    Optional[str] = None
-    timezone:       Optional[str] = None
+    videos_per_day: Optional[int]  = Field(None, ge=1, le=100)
+    start_time:     Optional[str]  = None
+    end_time:       Optional[str]  = None
+    # Legacy slots still accepted
+    time_slot_1:    Optional[str]  = None
+    time_slot_2:    Optional[str]  = None
+    time_slot_3:    Optional[str]  = None
+    timezone:       Optional[str]  = None
     is_active:      Optional[bool] = None
 
 

@@ -82,6 +82,8 @@ def get_schedule(
             time_slot_1    = "09:00",
             time_slot_2    = "15:00",
             time_slot_3    = "21:00",
+            start_time     = "09:00",
+            end_time       = "23:00",
         )
         db.add(schedule)
         db.commit()
@@ -103,6 +105,8 @@ def update_schedule(
         db.flush()
 
     if body.videos_per_day is not None: schedule.videos_per_day = body.videos_per_day
+    if body.start_time     is not None: schedule.start_time     = body.start_time
+    if body.end_time       is not None: schedule.end_time       = body.end_time
     if body.time_slot_1    is not None: schedule.time_slot_1    = body.time_slot_1
     if body.time_slot_2    is not None: schedule.time_slot_2    = body.time_slot_2
     if body.time_slot_3    is not None: schedule.time_slot_3    = body.time_slot_3

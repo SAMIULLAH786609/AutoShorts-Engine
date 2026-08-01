@@ -3,13 +3,14 @@ AutoShorts Backend — APScheduler (24/7 automated video generation).
 
 Runs in the same process as FastAPI.
 Every minute, checks all active users and fires video generation
-at their configured time slots.
+based on their configured schedule (start_time, end_time, videos_per_day).
+Videos are distributed evenly across the day between start_time and end_time.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -17,6 +18,41 @@ from apscheduler.triggers.cron import CronTrigger
 log = logging.getLogger("autoshorts.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
+
+
+def _compute_slots(start_time: str, end_time: str, videos_per_day: int) -> list[str]:
+    """
+    Distribute `videos_per_day` evenly between start_time and end_time.
+    Returns a list of HH:MM strings (UTC).
+
+    Examples:
+      start=09:00, end=23:00, count=4  → ["09:00","13:40","18:20","23:00"]
+      start=09:00, end=09:00, count=1  → ["09:00"]
+    """
+    if videos_per_day <= 0:
+        return []
+
+    def parse(t: str):
+        h, m = map(int, t.split(":"))
+        return h * 60 + m
+
+    start_min = parse(start_time or "09:00")
+    end_min   = parse(end_time   or "23:00")
+
+    if start_min > end_min:
+        end_min = start_min  # safety
+
+    if videos_per_day == 1:
+        slots_min = [start_min]
+    else:
+        step = (end_min - start_min) / (videos_per_day - 1)
+        slots_min = [int(round(start_min + i * step)) for i in range(videos_per_day)]
+
+    result = []
+    for m in slots_min:
+        h, mm = divmod(m, 60)
+        result.append(f"{h:02d}:{mm:02d}")
+    return result
 
 
 def start_scheduler() -> None:
@@ -50,8 +86,9 @@ def stop_scheduler() -> None:
 
 def _check_and_fire_scheduled_jobs() -> None:
     """
-    Called every minute (or upon server wake-up). Checks every active user's schedule.
+    Called every minute. Checks every active user's schedule.
     Fires video generation for any time slot that is due today and has not yet run.
+    Supports unlimited videos_per_day distributed evenly between start_time and end_time.
     """
     from backend.database import SessionLocal
     from backend.models import User, UserSchedule, YouTubeChannel, VideoJob
@@ -59,8 +96,8 @@ def _check_and_fire_scheduled_jobs() -> None:
     db = SessionLocal()
 
     try:
-        now_utc  = datetime.now(timezone.utc)
-        now_time = now_utc.strftime("%H:%M")   # e.g. "09:00"
+        now_utc     = datetime.now(timezone.utc)
+        now_time    = now_utc.strftime("%H:%M")   # e.g. "09:00"
         today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Get all users with active schedules
@@ -76,31 +113,34 @@ def _check_and_fire_scheduled_jobs() -> None:
                 continue
 
             max_videos = schedule.videos_per_day or 3
-            slots = [schedule.time_slot_1, schedule.time_slot_2, schedule.time_slot_3]
-            active_slots = [s for s in slots[:max_videos] if s]
 
-            # Find slots that are due today up to the current time
-            due_slots = [s for s in active_slots if now_time >= s]
+            # Compute evenly-spaced slots using new start/end time if available
+            start = schedule.start_time or schedule.time_slot_1 or "09:00"
+            end   = schedule.end_time   or schedule.time_slot_3 or "23:00"
+            all_slots = _compute_slots(start, end, max_videos)
+
+            # Find how many slots are due (time has passed or equals) today
+            due_slots = [s for s in all_slots if now_time >= s]
             if not due_slots:
                 continue
 
-            # Check scheduled jobs already created today for this user
+            # Count scheduled jobs already created today for this user
             today_jobs = (
                 db.query(VideoJob)
                 .filter(
-                    VideoJob.user_id   == user.id,
-                    VideoJob.trigger   == "scheduled",
+                    VideoJob.user_id    == user.id,
+                    VideoJob.trigger    == "scheduled",
                     VideoJob.created_at >= today_start,
                     VideoJob.status.in_(["pending", "running", "complete"]),
                 )
                 .count()
             )
 
-            # If we've already fired jobs for all currently due slots, skip
+            # If we've already fired enough jobs for all due slots, skip
             if today_jobs >= len(due_slots):
                 continue
 
-            # Check if a job is currently pending or running
+            # Do not start a new job if one is already pending or running
             running = (
                 db.query(VideoJob)
                 .filter(
@@ -119,7 +159,7 @@ def _check_and_fire_scheduled_jobs() -> None:
             channel = (
                 db.query(YouTubeChannel)
                 .filter(
-                    YouTubeChannel.user_id    == user.id,
+                    YouTubeChannel.user_id      == user.id,
                     YouTubeChannel.is_connected == True,
                 )
                 .first()
@@ -129,7 +169,7 @@ def _check_and_fire_scheduled_jobs() -> None:
                 log.warning("No channel for scheduled user %s — skipping", user.email)
                 continue
 
-            # Create the job
+            # Create the job record
             job = VideoJob(
                 user_id    = user.id,
                 channel_id = channel.id,
@@ -141,11 +181,11 @@ def _check_and_fire_scheduled_jobs() -> None:
             db.refresh(job)
 
             log.info(
-                "Scheduled job created for user %s at current time %s for due slots %d (job id: %s)",
-                user.email, now_time, len(due_slots), job.id,
+                "Scheduled job created for user %s | slot %d/%d at %s UTC (job id: %s)",
+                user.email, today_jobs + 1, max_videos, now_time, job.id,
             )
 
-            # Fire the pipeline in a new thread to avoid blocking the scheduler
+            # Fire the pipeline in a new background thread
             import threading
             from backend.routers.jobs import _run_pipeline_task
 

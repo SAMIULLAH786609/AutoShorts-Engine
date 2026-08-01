@@ -160,11 +160,17 @@ class UserSchedule(Base):
     user_id        = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
 
     videos_per_day = Column(Integer, default=3)
+
+    # Legacy fixed slots (kept for backward compat)
     time_slot_1    = Column(String(5), default="09:00")   # HH:MM
     time_slot_2    = Column(String(5), default="15:00")
     time_slot_3    = Column(String(5), default="21:00")
-    timezone       = Column(String(50), default="UTC")
 
+    # New flexible schedule: distribute videos_per_day evenly between start and end
+    start_time     = Column(String(5), default="09:00")   # HH:MM UTC
+    end_time       = Column(String(5), default="23:00")   # HH:MM UTC
+
+    timezone       = Column(String(50), default="UTC")
     is_active      = Column(Boolean, default=True)
 
     created_at     = Column(DateTime(timezone=True), default=_utcnow)
