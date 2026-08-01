@@ -2,10 +2,12 @@
 AutoShorts Backend — YouTube Stats Fetcher.
 
 Fetches live video statistics (views, likes, comments) from the
-YouTube Data API v3 using the channel's stored OAuth credentials.
+YouTube Data API v3.
 
-No separate YOUTUBE_API_KEY needed — uses the same OAuth token
-that was used for uploading the video.
+Strategy:
+  1. Use the channel's stored OAuth access token directly via HTTP request
+     (no token refresh library needed — works even without GOOGLE_CLIENT_ID)
+  2. If access token fails/expired, try with YOUTUBE_API_KEY env var
 """
 
 from __future__ import annotations
@@ -13,47 +15,11 @@ from __future__ import annotations
 import logging
 import os
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+import requests
 
 log = logging.getLogger("autoshorts.youtube_stats")
 
-
-def _build_youtube_service(channel):
-    """
-    Build a YouTube API service client from the channel's stored OAuth tokens.
-    Falls back gracefully if token refresh fails.
-    """
-    from backend.auth_service import decrypt_token
-
-    access_token  = decrypt_token(channel.access_token_enc)  if channel.access_token_enc  else None
-    refresh_token = decrypt_token(channel.refresh_token_enc) if channel.refresh_token_enc else None
-
-    if not access_token and not refresh_token:
-        raise ValueError("Channel has no stored OAuth tokens — cannot fetch stats")
-
-    client_id     = os.environ.get("GOOGLE_CLIENT_ID",     "")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-
-    creds = Credentials(
-        token         = access_token,
-        refresh_token = refresh_token,
-        token_uri     = "https://oauth2.googleapis.com/token",
-        client_id     = client_id,
-        client_secret = client_secret,
-        scopes        = ["https://www.googleapis.com/auth/youtube"],
-    )
-
-    # Try to refresh if token is expired
-    if refresh_token and client_id and client_secret:
-        try:
-            if creds.expired:
-                creds.refresh(Request())
-        except Exception as exc:
-            log.warning("Token refresh failed (will try with current token): %s", exc)
-
-    return build("youtube", "v3", credentials=creds, cache_discovery=False)
+YT_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 
 def fetch_video_stats(channel, video_id: str) -> dict:
@@ -69,30 +35,109 @@ def fetch_video_stats(channel, video_id: str) -> dict:
     -------
     dict with keys: 'views', 'likes', 'comments'
     """
-    youtube = _build_youtube_service(channel)
+    # --- Attempt 1: use stored OAuth access token directly ---
+    try:
+        from backend.auth_service import decrypt_token
+        access_token = decrypt_token(channel.access_token_enc) if channel.access_token_enc else None
 
-    response = youtube.videos().list(
-        part="statistics",
-        id=video_id,
-    ).execute()
+        if access_token:
+            result = _fetch_with_token(video_id, access_token)
+            if result is not None:
+                log.info("Stats via OAuth token for %s: %s", video_id, result)
+                return result
+    except Exception as exc:
+        log.warning("OAuth token stats attempt failed: %s", exc)
 
-    items = response.get("items", [])
+    # --- Attempt 2: use YOUTUBE_API_KEY (no OAuth needed for public videos) ---
+    api_key = os.environ.get("YOUTUBE_API_KEY", "")
+    if api_key:
+        try:
+            result = _fetch_with_api_key(video_id, api_key)
+            if result is not None:
+                log.info("Stats via API key for %s: %s", video_id, result)
+                return result
+        except Exception as exc:
+            log.warning("API key stats attempt failed: %s", exc)
+
+    # --- Attempt 3: try refresh token to get a new access token ---
+    try:
+        new_token = _refresh_access_token(channel)
+        if new_token:
+            result = _fetch_with_token(video_id, new_token)
+            if result is not None:
+                log.info("Stats via refreshed token for %s: %s", video_id, result)
+                return result
+    except Exception as exc:
+        log.warning("Token refresh stats attempt failed: %s", exc)
+
+    raise RuntimeError(
+        "Could not fetch YouTube stats. Make sure the video is Public and your channel is connected. "
+        "Try adding YOUTUBE_API_KEY to your Render environment variables."
+    )
+
+
+def _fetch_with_token(video_id: str, access_token: str) -> dict | None:
+    """Call YouTube Data API using OAuth Bearer token."""
+    resp = requests.get(
+        YT_VIDEOS_URL,
+        params={"part": "statistics", "id": video_id},
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
+    if resp.status_code == 401:
+        log.warning("Access token expired (401)")
+        return None
+    resp.raise_for_status()
+    return _parse_stats(resp.json(), video_id)
+
+
+def _fetch_with_api_key(video_id: str, api_key: str) -> dict | None:
+    """Call YouTube Data API using a server API key (works for public videos)."""
+    resp = requests.get(
+        YT_VIDEOS_URL,
+        params={"part": "statistics", "id": video_id, "key": api_key},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return _parse_stats(resp.json(), video_id)
+
+
+def _refresh_access_token(channel) -> str | None:
+    """Try to get a fresh access token using the stored refresh token."""
+    from backend.auth_service import decrypt_token
+    refresh_token = decrypt_token(channel.refresh_token_enc) if channel.refresh_token_enc else None
+    if not refresh_token:
+        return None
+
+    client_id     = os.environ.get("GOOGLE_CLIENT_ID",     "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return None
+
+    resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "grant_type":    "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id":     client_id,
+            "client_secret": client_secret,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json().get("access_token")
+
+
+def _parse_stats(data: dict, video_id: str) -> dict | None:
+    """Parse the YouTube API response and return stats dict."""
+    items = data.get("items", [])
     if not items:
-        # Video might be private or not found — return zeros
-        log.warning("YouTube API returned no items for video ID: %s (private/deleted?)", video_id)
+        log.warning("YouTube API returned no items for video %s (private/deleted?)", video_id)
         return {"views": 0, "likes": 0, "comments": 0}
 
     stats = items[0].get("statistics", {})
-
-    result = {
+    return {
         "views":    int(stats.get("viewCount",    0)),
         "likes":    int(stats.get("likeCount",    0)),
-        # commentCount may be missing if comments are disabled
         "comments": int(stats.get("commentCount", 0)),
     }
-
-    log.info(
-        "Stats for video %s: %d views, %d likes, %d comments",
-        video_id, result["views"], result["likes"], result["comments"],
-    )
-    return result
