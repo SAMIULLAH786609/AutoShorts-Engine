@@ -98,7 +98,7 @@ VOICE_URDU_MALE      = os.getenv("VOICE_URDU_MALE",       "ur-PK-AsadNeural")
 
 VIDEO_WIDTH  = int(os.getenv("VIDEO_WIDTH",  "720"))
 VIDEO_HEIGHT = int(os.getenv("VIDEO_HEIGHT", "1280"))
-VIDEO_FPS    = int(os.getenv("VIDEO_FPS",    "30"))
+VIDEO_FPS    = int(os.getenv("VIDEO_FPS",    "24"))   # 24fps saves ~20% RAM vs 30fps
 
 # Windows default bold font — update if running on Linux/Mac
 FONT_PATH = os.getenv("FONT_PATH", r"C:\Windows\Fonts\arialbd.ttf")

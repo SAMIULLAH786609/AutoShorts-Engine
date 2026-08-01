@@ -254,11 +254,18 @@ def delete_job(
 
 # ── Background task ───────────────────────────────────────────
 
+MAX_AUTO_RETRIES = 3          # maximum retry attempts per job chain
+RETRY_DELAY_SEC  = 90         # wait 90 seconds before retrying (let server breathe)
+
+
 def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
     """
     Background function that runs the full pipeline for one user.
     Updates job status in the database throughout.
+    On failure (including OOM), automatically retries up to MAX_AUTO_RETRIES times.
     """
+    import gc
+    import time
     from backend.database import SessionLocal
     db = SessionLocal()
 
@@ -274,6 +281,9 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
         job.status     = "running"
         job.started_at = datetime.now(timezone.utc)
         db.commit()
+
+        # Force garbage collection before heavy pipeline work
+        gc.collect()
 
         # Run the pipeline
         from backend.pipeline_runner import run_pipeline_for_user
@@ -293,17 +303,64 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
         db.commit()
 
     except Exception as exc:
-        # Mark as failed
+        error_msg = str(exc)[:2000]
+        retry_count = 0
+
         try:
             job = db.query(VideoJob).filter(VideoJob.id == job_id).first()
             if job:
+                retry_count       = (job.retry_count or 0) + 1
                 job.status        = "failed"
                 job.completed_at  = datetime.now(timezone.utc)
-                job.error_message = str(exc)[:2000]
-                job.retry_count   = (job.retry_count or 0) + 1
+                job.error_message = f"[Attempt {retry_count}] {error_msg}"
+                job.retry_count   = retry_count
                 db.commit()
         except Exception:
             pass
 
+        # ── AUTO-RETRY ───────────────────────────────────────────
+        if retry_count < MAX_AUTO_RETRIES:
+            import logging as _logging
+            _log = _logging.getLogger("autoshorts.jobs")
+            _log.warning(
+                "Job %s failed (attempt %d/%d): %s. Retrying in %ds...",
+                job_id, retry_count, MAX_AUTO_RETRIES, error_msg[:150], RETRY_DELAY_SEC,
+            )
+            db.close()
+            db = None
+            gc.collect()
+            time.sleep(RETRY_DELAY_SEC)
+
+            db2 = SessionLocal()
+            try:
+                new_job = VideoJob(
+                    user_id     = user_id,
+                    channel_id  = channel_id,
+                    status      = "pending",
+                    trigger     = "retry",
+                    retry_count = retry_count,
+                )
+                db2.add(new_job)
+                db2.commit()
+                db2.refresh(new_job)
+                _log.info("Auto-retry job created: %s (attempt %d)", new_job.id, retry_count + 1)
+
+                import threading as _threading
+                t = _threading.Thread(
+                    target = _run_pipeline_task,
+                    args   = (new_job.id, user_id, channel_id),
+                    daemon = True,
+                    name   = f"pipeline-retry-{new_job.id[:8]}",
+                )
+                t.start()
+            except Exception as retry_exc:
+                _log.error("Failed to create retry job: %s", retry_exc)
+            finally:
+                db2.close()
+            return
+        # ── END AUTO-RETRY ───────────────────────────────────────
+
     finally:
-        db.close()
+        if db is not None:
+            db.close()
+        gc.collect()

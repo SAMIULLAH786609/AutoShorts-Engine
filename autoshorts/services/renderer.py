@@ -141,6 +141,10 @@ def _build_background(
     if not opened:
         raise RuntimeError("All video clips failed to open.")
 
+    # Limit clips to 3 max — each open VideoFileClip holds frames in RAM
+    # On free Render (512MB), more than 3 clips causes OOM
+    opened = opened[:3]
+
     segment_duration = max(3.0, required_duration / len(opened))
     segments: list[VideoFileClip] = []
     current = 0.0
@@ -164,6 +168,8 @@ def _build_background(
             clips_to_close.append(seg)
 
         seg = _fit_vertical(seg, clips_to_close)
+        # NOTE: zoom effect disabled on free tier to save memory
+        # (each zoom call creates extra resized frame buffers)
         segments.append(seg)
         current += use_dur
         idx += 1
@@ -365,9 +371,10 @@ def render_short(
                 fps=VIDEO_FPS,
                 codec="libx264",
                 audio_codec="aac",
-                preset="superfast",
+                preset="ultrafast",   # fastest encode = lowest peak RAM usage
                 threads=1,
                 logger=None,
+                bitrate="1200k",      # lower bitrate = less memory during encode
             )
 
         # Forward any non-trivial suppressed output to debug log
