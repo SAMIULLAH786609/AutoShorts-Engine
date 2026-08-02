@@ -5,6 +5,12 @@ Runs in the same process as FastAPI.
 Every minute, checks all active users and fires video generation
 based on their configured schedule (start_time, end_time, videos_per_day).
 Videos are distributed evenly across the day between start_time and end_time.
+
+CRASH-SAFE RETRY:
+If the server crashes (OOM) mid-job, any "running" or "pending" jobs that are
+stuck (no progress for >10 minutes) are automatically retried. This means even
+if Render kills the process, the scheduler will restart the job once the server
+recovers — no manual intervention needed.
 """
 
 from __future__ import annotations
@@ -19,15 +25,17 @@ log = logging.getLogger("autoshorts.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
 
+# Jobs stuck longer than this are considered crashed and retried
+STUCK_JOB_TIMEOUT_MINUTES = 10
+
+# Max automatic retries for any single day's slot
+MAX_AUTO_RETRIES = 3
+
 
 def _compute_slots(start_time: str, end_time: str, videos_per_day: int) -> list[str]:
     """
     Distribute `videos_per_day` evenly between start_time and end_time.
     Returns a list of HH:MM strings (UTC).
-
-    Examples:
-      start=09:00, end=23:00, count=4  → ["09:00","13:40","18:20","23:00"]
-      start=09:00, end=09:00, count=1  → ["09:00"]
     """
     if videos_per_day <= 0:
         return []
@@ -40,7 +48,7 @@ def _compute_slots(start_time: str, end_time: str, videos_per_day: int) -> list[
     end_min   = parse(end_time   or "23:00")
 
     if start_min > end_min:
-        end_min = start_min  # safety
+        end_min = start_min
 
     if videos_per_day == 1:
         slots_min = [start_min]
@@ -64,17 +72,17 @@ def start_scheduler() -> None:
 
     _scheduler = BackgroundScheduler(timezone="UTC")
 
-    # Check every minute: fire jobs for users whose scheduled time matches
+    # Check every minute: fire jobs and recover crashed ones
     _scheduler.add_job(
         _check_and_fire_scheduled_jobs,
-        trigger    = CronTrigger(minute="*"),  # every minute
-        id         = "scheduled_video_check",
+        trigger          = CronTrigger(minute="*"),
+        id               = "scheduled_video_check",
         replace_existing = True,
-        max_instances    = 1,                  # never run twice at same time
+        max_instances    = 1,
     )
 
     _scheduler.start()
-    log.info("APScheduler started — monitoring user schedules every minute")
+    log.info("APScheduler started — monitoring schedules + auto-recovering crashed jobs every minute")
 
 
 def stop_scheduler() -> None:
@@ -84,11 +92,43 @@ def stop_scheduler() -> None:
         log.info("APScheduler stopped")
 
 
+def _fire_new_job(user_id: str, channel_id: str, trigger: str, db, retry_count: int = 0):
+    """Create a VideoJob record and start the pipeline thread."""
+    import threading
+    from backend.models import VideoJob
+    from backend.routers.jobs import _run_pipeline_task
+
+    job = VideoJob(
+        user_id     = user_id,
+        channel_id  = channel_id,
+        status      = "pending",
+        trigger     = trigger,
+        retry_count = retry_count,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    t = threading.Thread(
+        target = _run_pipeline_task,
+        args   = (job.id, user_id, channel_id),
+        daemon = True,
+        name   = f"pipeline-{job.id[:8]}",
+    )
+    t.start()
+    return job
+
+
 def _check_and_fire_scheduled_jobs() -> None:
     """
-    Called every minute. Checks every active user's schedule.
-    Fires video generation for any time slot that is due today and has not yet run.
-    Supports unlimited videos_per_day distributed evenly between start_time and end_time.
+    Called every minute. Does two things:
+
+    1. CRASH RECOVERY — finds any jobs that are stuck in "running" or "pending"
+       state for longer than STUCK_JOB_TIMEOUT_MINUTES (server crashed mid-job)
+       and automatically fires a new retry job.
+
+    2. SCHEDULED FIRING — checks each user's schedule and fires new jobs
+       for any time slots that are due today.
     """
     from backend.database import SessionLocal
     from backend.models import User, UserSchedule, YouTubeChannel, VideoJob
@@ -96,11 +136,66 @@ def _check_and_fire_scheduled_jobs() -> None:
     db = SessionLocal()
 
     try:
-        now_utc     = datetime.now(timezone.utc)
-        now_time    = now_utc.strftime("%H:%M")   # e.g. "09:00"
-        today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        now_utc      = datetime.now(timezone.utc)
+        now_time     = now_utc.strftime("%H:%M")
+        today_start  = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        stuck_cutoff = now_utc - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
 
-        # Get all users with active schedules
+        # ── PART 1: CRASH RECOVERY ────────────────────────────────────────────
+        # Find jobs stuck in pending/running that haven't made progress
+        # (these are jobs the server was processing when it ran out of memory)
+        stuck_jobs = (
+            db.query(VideoJob)
+            .filter(
+                VideoJob.status.in_(["pending", "running"]),
+                VideoJob.created_at <= stuck_cutoff,
+            )
+            .all()
+        )
+
+        for stuck in stuck_jobs:
+            retry_count = (stuck.retry_count or 0) + 1
+            if retry_count > MAX_AUTO_RETRIES:
+                # Give up — mark as permanently failed
+                stuck.status        = "failed"
+                stuck.error_message = f"[Auto] Gave up after {MAX_AUTO_RETRIES} crash recoveries (OOM)"
+                stuck.retry_count   = retry_count
+                db.commit()
+                log.warning(
+                    "Job %s gave up after %d crash recoveries",
+                    stuck.id[:8], MAX_AUTO_RETRIES,
+                )
+                continue
+
+            # Get the channel for this stuck job
+            channel = (
+                db.query(YouTubeChannel)
+                .filter(YouTubeChannel.id == stuck.channel_id)
+                .first()
+            )
+            if not channel:
+                continue
+
+            # Mark the stuck job as failed with a clear reason
+            stuck.status        = "failed"
+            stuck.error_message = f"[Auto-retry {retry_count}/{MAX_AUTO_RETRIES}] Server ran out of memory (OOM). Retrying now..."
+            stuck.retry_count   = retry_count
+            db.commit()
+
+            # Fire a fresh job immediately
+            new_job = _fire_new_job(
+                user_id     = stuck.user_id,
+                channel_id  = stuck.channel_id,
+                trigger     = "retry",
+                db          = db,
+                retry_count = retry_count,
+            )
+            log.info(
+                "CRASH RECOVERY: stuck job %s -> new job %s (attempt %d/%d)",
+                stuck.id[:8], new_job.id[:8], retry_count, MAX_AUTO_RETRIES,
+            )
+
+        # ── PART 2: SCHEDULED FIRING ─────────────────────────────────────────
         schedules = (
             db.query(UserSchedule)
             .filter(UserSchedule.is_active == True)
@@ -113,18 +208,15 @@ def _check_and_fire_scheduled_jobs() -> None:
                 continue
 
             max_videos = schedule.videos_per_day or 3
-
-            # Compute evenly-spaced slots using new start/end time if available
             start = schedule.start_time or schedule.time_slot_1 or "09:00"
             end   = schedule.end_time   or schedule.time_slot_3 or "23:00"
             all_slots = _compute_slots(start, end, max_videos)
 
-            # Find how many slots are due (time has passed or equals) today
             due_slots = [s for s in all_slots if now_time >= s]
             if not due_slots:
                 continue
 
-            # Count scheduled jobs already created today for this user
+            # Count scheduled jobs already done today
             today_jobs = (
                 db.query(VideoJob)
                 .filter(
@@ -136,11 +228,10 @@ def _check_and_fire_scheduled_jobs() -> None:
                 .count()
             )
 
-            # If we've already fired enough jobs for all due slots, skip
             if today_jobs >= len(due_slots):
                 continue
 
-            # Do not start a new job if one is already pending or running
+            # Don't start if something is already running/pending
             running = (
                 db.query(VideoJob)
                 .filter(
@@ -150,12 +241,9 @@ def _check_and_fire_scheduled_jobs() -> None:
                 .first()
             )
             if running:
-                log.info(
-                    "Skipping schedule for user %s — a job is currently pending/running", user.id
-                )
+                log.info("Skipping schedule for user %s — job already running", user.id)
                 continue
 
-            # Get first connected channel
             channel = (
                 db.query(YouTubeChannel)
                 .filter(
@@ -164,38 +252,20 @@ def _check_and_fire_scheduled_jobs() -> None:
                 )
                 .first()
             )
-
             if not channel:
-                log.warning("No channel for scheduled user %s — skipping", user.email)
+                log.warning("No channel for user %s — skipping schedule", user.email)
                 continue
 
-            # Create the job record
-            job = VideoJob(
+            new_job = _fire_new_job(
                 user_id    = user.id,
                 channel_id = channel.id,
-                status     = "pending",
                 trigger    = "scheduled",
+                db         = db,
             )
-            db.add(job)
-            db.commit()
-            db.refresh(job)
-
             log.info(
-                "Scheduled job created for user %s | slot %d/%d at %s UTC (job id: %s)",
-                user.email, today_jobs + 1, max_videos, now_time, job.id,
+                "Scheduled job fired for user %s | slot %d/%d at %s UTC (job %s)",
+                user.email, today_jobs + 1, max_videos, now_time, new_job.id[:8],
             )
-
-            # Fire the pipeline in a new background thread
-            import threading
-            from backend.routers.jobs import _run_pipeline_task
-
-            t = threading.Thread(
-                target = _run_pipeline_task,
-                args   = (job.id, user.id, channel.id),
-                daemon = True,
-                name   = f"pipeline-{job.id[:8]}",
-            )
-            t.start()
 
     except Exception as exc:
         log.exception("Scheduler check failed: %s", exc)
