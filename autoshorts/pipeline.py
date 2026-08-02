@@ -306,9 +306,14 @@ def _step_save_to_db(
 
     duration = 0.0
     try:
-        from moviepy import VideoFileClip as _VFC
-        with _VFC(str(video_path)) as vc:
-            duration = vc.duration
+        import subprocess, json as _json
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)],
+            capture_output=True, text=True, timeout=15
+        )
+        for s in _json.loads(r.stdout).get("streams", []):
+            if s.get("duration"):
+                duration = float(s["duration"]); break
     except Exception:
         pass
 

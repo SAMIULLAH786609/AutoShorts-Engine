@@ -257,9 +257,14 @@ def run_pipeline_for_user(
 
         # ── Duration ──────────────────────────────────────────────
         try:
-            from moviepy import VideoFileClip
-            with VideoFileClip(str(video_path)) as vc:
-                duration = vc.duration
+            import subprocess as _sp, json as _json
+            r = _sp.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)],
+                capture_output=True, text=True, timeout=15
+            )
+            for s in _json.loads(r.stdout).get("streams", []):
+                if s.get("duration"):
+                    duration = float(s["duration"]); break
         except Exception:
             pass
 
