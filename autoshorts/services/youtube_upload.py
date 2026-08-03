@@ -97,31 +97,45 @@ def upload_video(
         raise ValueError(f"privacy_status must be one of {allowed}")
 
     hashtags = hashtags or []
-    hashtag_text = " ".join(
-        f"#{tag.strip().lstrip('#')}" for tag in hashtags if tag.strip()
+
+    # Always include Shorts-critical tags
+    core_tags = ["Shorts", "Short", "YouTubeShorts", "viral", "facts", "trending"]
+    all_tags  = core_tags + [t.strip().lstrip("#") for t in hashtags if t.strip()]
+    # YouTube allows max 500 chars total in tags
+    tags_list = list(dict.fromkeys(all_tags))[:30]   # dedupe + limit
+
+    # Build hashtag line for description — #Shorts MUST appear in description
+    # for YouTube to classify the video as a Short in the Shorts feed
+    hash_core = "#Shorts #Short #viral #facts #trending"
+    extra_tags = " ".join(
+        f"#{t.strip().lstrip('#')}" for t in hashtags if t.strip()
     )
+    hashtag_line = f"{hash_core} {extra_tags}".strip()
+
     final_description = description.strip()
-    if hashtag_text:
-        final_description += f"\n\n{hashtag_text}"
+    final_description += f"\n\n{hashtag_line}"
 
     youtube = get_youtube_service()
 
     request_body = {
         "snippet": {
-            "title": title[:100],
-            "description": final_description,
-            "categoryId": "24",   # Entertainment
+            "title":       title[:100],
+            "description": final_description[:5000],
+            "tags":        tags_list,       # ← critical for search discovery
+            "categoryId":  "27",            # 27 = Education (better for facts/science Shorts)
+            "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus": privacy_status,
-            "selfDeclaredMadeForKids": False,
+            "privacyStatus":             privacy_status,
+            "selfDeclaredMadeForKids":   False,
+            "madeForKids":               False,
         },
     }
 
     media = MediaFileUpload(
         str(video_path),
         mimetype="video/mp4",
-        chunksize=5 * 1024 * 1024,  # 5MB chunks
+        chunksize=5 * 1024 * 1024,  # 5 MB chunks
         resumable=True,
     )
 
@@ -145,4 +159,4 @@ def upload_video(
         "Upload successful! Video ID: %s | URL: https://youtu.be/%s",
         video_id, video_id,
     )
-    return video_id
+    return video_id
