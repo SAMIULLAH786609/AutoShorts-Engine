@@ -3,7 +3,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  /* Color Palette */
+  /* Color Palette — dark (default) */
   --bg-base:       #0a0a0f;
   --bg-surface:    #111118;
   --bg-elevated:   #18181f;
@@ -24,12 +24,24 @@
   --text-secondary: #9898b0;
   --text-muted:     #5a5a70;
 
+  /* Accent used for inline links (needs to darken on light bg for contrast) */
+  --link: #a78bfa;
+
   /* Status Colors */
   --green:  #22c55e;
   --red:    #ef4444;
   --yellow: #f59e0b;
   --blue:   #3b82f6;
   --purple: #a855f7;
+
+  /* Toggle / switch track (inactive state) */
+  --toggle-off: #3f3f46;
+
+  /* Alert text (pastel — legible on the dark, low-opacity alert fills) */
+  --alert-error-fg:   #fca5a5;
+  --alert-success-fg: #86efac;
+  --alert-info-fg:    #93c5fd;
+  --alert-warning-fg: #fcd34d;
 
   /* Spacing / Radii */
   --radius-sm: 8px;
@@ -41,6 +53,84 @@
   --shadow-card: 0 4px 24px rgba(0,0,0,0.4);
   --shadow-glow: 0 0 40px rgba(124,58,237,0.15);
   --shadow-btn:  0 4px 16px rgba(124,58,237,0.4);
+
+  color-scheme: dark;
+}
+
+/* ── Light theme ──
+   Applied when the OS prefers light and the user hasn't explicitly chosen
+   dark, or when the user has explicitly chosen light via the toggle. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg-base:       #f6f6fb;
+    --bg-surface:    #ffffff;
+    --bg-elevated:   #f0f0f7;
+    --bg-card:       #ffffff;
+    --bg-hover:      #ececf5;
+    --border:        rgba(20,20,45,0.08);
+    --border-bright: rgba(20,20,45,0.15);
+
+    --text-primary:   #17171f;
+    --text-secondary: #55556b;
+    --text-muted:     #85859c;
+
+    --link: #6d28d9;
+    --gradient-text: linear-gradient(135deg, #7c3aed, #4338ca);
+
+    --green:  #16a34a;
+    --red:    #dc2626;
+    --yellow: #b45309;
+    --blue:   #2563eb;
+    --purple: #9333ea;
+
+    --toggle-off: #d4d4e0;
+
+    --alert-error-fg:   #b91c1c;
+    --alert-success-fg: #15803d;
+    --alert-info-fg:    #1d4ed8;
+    --alert-warning-fg: #92400e;
+
+    --shadow-card: 0 4px 20px rgba(30,30,60,0.08);
+    --shadow-glow: 0 0 40px rgba(124,58,237,0.08);
+    --shadow-btn:  0 4px 16px rgba(124,58,237,0.28);
+
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg-base:       #f6f6fb;
+  --bg-surface:    #ffffff;
+  --bg-elevated:   #f0f0f7;
+  --bg-card:       #ffffff;
+  --bg-hover:      #ececf5;
+  --border:        rgba(20,20,45,0.08);
+  --border-bright: rgba(20,20,45,0.15);
+
+  --text-primary:   #17171f;
+  --text-secondary: #55556b;
+  --text-muted:     #85859c;
+
+  --link: #6d28d9;
+  --gradient-text: linear-gradient(135deg, #7c3aed, #4338ca);
+
+  --green:  #16a34a;
+  --red:    #dc2626;
+  --yellow: #b45309;
+  --blue:   #2563eb;
+  --purple: #9333ea;
+
+  --toggle-off: #d4d4e0;
+
+  --alert-error-fg:   #b91c1c;
+  --alert-success-fg: #15803d;
+  --alert-info-fg:    #1d4ed8;
+  --alert-warning-fg: #92400e;
+
+  --shadow-card: 0 4px 20px rgba(30,30,60,0.08);
+  --shadow-glow: 0 0 40px rgba(124,58,237,0.08);
+  --shadow-btn:  0 4px 16px rgba(124,58,237,0.28);
+
+  color-scheme: light;
 }
 
 html, body, #root {
@@ -223,6 +313,7 @@ select.form-input { cursor: pointer; }
 
 /* ── Auth Pages ── */
 .auth-page {
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -272,7 +363,7 @@ select.form-input { cursor: pointer; }
 
 .auth-form { display: flex; flex-direction: column; gap: 16px; }
 .auth-footer { text-align: center; margin-top: 20px; font-size: 14px; color: var(--text-secondary); }
-.auth-footer a { color: #a78bfa; text-decoration: none; font-weight: 500; }
+.auth-footer a { color: var(--link); text-decoration: none; font-weight: 500; }
 .auth-footer a:hover { text-decoration: underline; }
 
 /* ── App Layout ── */
@@ -344,9 +435,9 @@ select.form-input { cursor: pointer; }
 .nav-item:hover { background: var(--bg-elevated); color: var(--text-primary); }
 .nav-item.active {
   background: rgba(124,58,237,0.15);
-  color: #a78bfa;
+  color: var(--link);
 }
-.nav-item.active svg { color: #a78bfa; }
+.nav-item.active svg { color: var(--link); }
 .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 .sidebar-bottom {
@@ -482,10 +573,10 @@ tbody td {
   font-size: 14px;
   line-height: 1.5;
 }
-.alert-error   { background: rgba(239,68,68,0.1);   border: 1px solid rgba(239,68,68,0.2);  color: #fca5a5; }
-.alert-success { background: rgba(34,197,94,0.1);   border: 1px solid rgba(34,197,94,0.2);  color: #86efac; }
-.alert-info    { background: rgba(59,130,246,0.1);  border: 1px solid rgba(59,130,246,0.2); color: #93c5fd; }
-.alert-warning { background: rgba(245,158,11,0.1);  border: 1px solid rgba(245,158,11,0.2); color: #fcd34d; }
+.alert-error   { background: rgba(239,68,68,0.1);   border: 1px solid rgba(239,68,68,0.2);  color: var(--alert-error-fg); }
+.alert-success { background: rgba(34,197,94,0.1);   border: 1px solid rgba(34,197,94,0.2);  color: var(--alert-success-fg); }
+.alert-info    { background: rgba(59,130,246,0.1);  border: 1px solid rgba(59,130,246,0.2); color: var(--alert-info-fg); }
+.alert-warning { background: rgba(245,158,11,0.1);  border: 1px solid rgba(245,158,11,0.2); color: var(--alert-warning-fg); }
 
 /* ── Connection Banner ── */
 .connect-banner {
@@ -499,6 +590,29 @@ tbody td {
   gap: 16px;
   margin-bottom: 24px;
 }
+
+/* ── Theme toggle ── */
+.theme-toggle {
+  margin-bottom: 4px;
+}
+
+.theme-toggle-floating {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.theme-toggle-floating:hover { background: var(--bg-hover); transform: translateY(-1px); }
 
 /* ── Responsive ── */
 @media (max-width: 768px) {

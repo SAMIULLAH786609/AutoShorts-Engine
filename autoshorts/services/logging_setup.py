@@ -17,6 +17,12 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 def configure_logging() -> logging.Logger:
     """Configure root autoshorts logger. Safe to call multiple times."""
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     logger = logging.getLogger("autoshorts")
 
     if logger.handlers:

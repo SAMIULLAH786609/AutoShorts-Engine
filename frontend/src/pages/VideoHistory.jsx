@@ -33,11 +33,29 @@ export default function VideoHistory() {
         setJobs(prev => [...prev, ...r.data])
       }
       setHasMore(r.data.length >= 15)
+      autoRefreshStats(r.data)
     } catch {
       setError('Failed to load video history')
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // Fetch views/likes/comments automatically for uploaded videos that
+  // haven't had their stats pulled yet (or not in the last 10 minutes),
+  // instead of requiring a manual click on every single row.
+  const autoRefreshStats = useCallback((rows) => {
+    const STALE_MS = 10 * 60 * 1000
+    const now = Date.now()
+    const targets = rows.filter(j =>
+      j.status === 'complete' &&
+      j.youtube_video_id &&
+      (!j.yt_stats_updated || now - new Date(j.yt_stats_updated).getTime() > STALE_MS)
+    )
+
+    targets.forEach((job, i) => {
+      setTimeout(() => { handleRefreshStats(job.id, { silent: true }) }, i * 400)
+    })
   }, [])
 
   useEffect(() => { fetchJobs(page) }, [page, fetchJobs])
@@ -54,14 +72,16 @@ export default function VideoHistory() {
     }
   }
 
-  const handleRefreshStats = async (jobId) => {
+  const handleRefreshStats = async (jobId, { silent = false } = {}) => {
     setRefreshing(r => ({ ...r, [jobId]: true }))
-    setError('')
+    if (!silent) setError('')
     try {
       const res = await api.post(`/jobs/${jobId}/refresh-stats`)
       setJobs(prev => prev.map(j => j.id === jobId ? res.data : j))
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
+      // Auto-refresh runs quietly in the background — only surface an
+      // error banner when the user explicitly clicked the button.
+      if (!silent) setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
     } finally {
       setRefreshing(r => ({ ...r, [jobId]: false }))
     }
@@ -132,7 +152,7 @@ export default function VideoHistory() {
                       <td>
                         {job.youtube_url ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <a href={job.youtube_url} target="_blank" rel="noreferrer" style={{ color: '#a78bfa', textDecoration: 'none', fontWeight: 500 }}>
+                            <a href={job.youtube_url} target="_blank" rel="noreferrer" style={{ color: 'var(--link)', textDecoration: 'none', fontWeight: 500 }}>
                               Watch Short ↗
                             </a>
                             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>ID: {job.youtube_video_id}</span>
@@ -142,13 +162,13 @@ export default function VideoHistory() {
                         )}
                       </td>
                       {/* YouTube live stats */}
-                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_views ? '#a78bfa' : '#5a5a70', fontSize:14}}>
+                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_views ? 'var(--link)' : 'var(--text-muted)', fontSize:14}}>
                         {fmtNum(job.yt_views)}
                       </td>
-                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_likes ? '#22c55e' : '#5a5a70', fontSize:14}}>
+                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_likes ? 'var(--green)' : 'var(--text-muted)', fontSize:14}}>
                         {fmtNum(job.yt_likes)}
                       </td>
-                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_comments ? '#f59e0b' : '#5a5a70', fontSize:14}}>
+                      <td style={{textAlign:'center', fontWeight:600, color: job.yt_comments ? 'var(--yellow)' : 'var(--text-muted)', fontSize:14}}>
                         {fmtNum(job.yt_comments)}
                       </td>
                       <td>

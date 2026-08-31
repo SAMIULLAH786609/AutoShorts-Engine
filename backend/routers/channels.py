@@ -10,7 +10,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List
 from urllib.parse import urlencode
 
@@ -113,7 +113,7 @@ def oauth_callback(
     access_token  = token_data.get("access_token",  "")
     refresh_token = token_data.get("refresh_token", "")
     expires_in    = int(token_data.get("expires_in", 3600))
-    expires_at    = datetime.now(timezone.utc)
+    expires_at    = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
     # Fetch channel info
     try:
@@ -271,7 +271,7 @@ def refresh_channel_tokens(channel: YouTubeChannel, db: Session) -> str:
     expires_in = int(data.get("expires_in", 3600))
 
     channel.access_token_enc = encrypt_token(new_access)
-    channel.token_expires_at = datetime.now(timezone.utc)
+    channel.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
     db.commit()
 
     return new_access

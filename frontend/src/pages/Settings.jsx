@@ -161,7 +161,7 @@ export default function Settings() {
                     )}
                     <div>
                       <div style={{ fontWeight: 600 }}>{c.channel_name || 'YouTube Channel'}</div>
-                      <a href={c.channel_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#a78bfa', textDecoration: 'none' }}>
+                      <a href={c.channel_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--link)', textDecoration: 'none' }}>
                         View channel page ↗
                       </a>
                     </div>

@@ -8,6 +8,7 @@ Supports English and Urdu voices with dynamic rate/pitch per style.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import edge_tts
@@ -54,8 +55,14 @@ async def _synthesize(
     output_path: Path,
     voice: str,
     style: str,
-) -> None:
-    """Internal async synthesizer."""
+) -> list[dict]:
+    """
+    Internal async synthesizer.
+
+    Streams the audio so we can also capture per-word timing (WordBoundary
+    events). Returns a list of {"word", "start", "end"} dicts in seconds —
+    used by the renderer for perfectly synced karaoke-style captions.
+    """
     rate, pitch = _STYLE_PARAMS.get(style.lower(), (_DEFAULT_RATE, _DEFAULT_PITCH))
 
     communicator = edge_tts.Communicate(
@@ -63,9 +70,24 @@ async def _synthesize(
         voice=voice,
         rate=rate,
         pitch=pitch,
+        boundary="WordBoundary",   # per-word timing for synced captions
     )
 
-    await communicator.save(str(output_path))
+    words: list[dict] = []
+    with open(output_path, "wb") as audio_file:
+        async for chunk in communicator.stream():
+            if chunk["type"] == "audio":
+                audio_file.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                start = chunk["offset"] / 1e7          # 100ns ticks -> seconds
+                dur   = chunk["duration"] / 1e7
+                words.append({
+                    "word":  chunk["text"],
+                    "start": round(start, 3),
+                    "end":   round(start + dur, 3),
+                })
+
+    return words
 
 
 def generate_voice(
@@ -99,7 +121,7 @@ def generate_voice(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    asyncio.run(
+    word_timings = asyncio.run(
         _synthesize(
             text=text,
             output_path=output_path,
@@ -110,6 +132,17 @@ def generate_voice(
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError(f"Voice generation failed — output is missing: {output_path}")
+
+    # Write a sidecar timing file next to the MP3 (e.g. foo_voice.words.json).
+    # The renderer picks this up for word-synced captions; if it's missing or
+    # empty the renderer falls back to an even time split.
+    if word_timings:
+        timing_path = output_path.parent / (output_path.stem + ".words.json")
+        try:
+            timing_path.write_text(json.dumps(word_timings), encoding="utf-8")
+            log.info("Captured %d word timings -> %s", len(word_timings), timing_path.name)
+        except Exception as exc:
+            log.warning("Could not write word-timing file (non-fatal): %s", exc)
 
     log.info("Voice generated: %s (%.1f KB)", output_path.name, output_path.stat().st_size / 1024)
     return output_path

@@ -22,11 +22,13 @@ function computeSlots(startTime, endTime, count) {
 
 export default function Schedule() {
   const [schedule, setSchedule] = useState({
-    videos_per_day: 3,
-    start_time: '09:00',
-    end_time: '23:00',
-    timezone: 'UTC',
-    is_active: true,
+    videos_per_day:     3,
+    start_time:         '09:00',
+    end_time:           '23:00',
+    long_video_enabled: true,
+    long_video_time:    '13:00',
+    timezone:           'UTC',
+    is_active:          true,
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
@@ -38,11 +40,13 @@ export default function Schedule() {
       .then(r => {
         const d = r.data
         setSchedule({
-          videos_per_day: d.videos_per_day || 3,
-          start_time:     d.start_time     || d.time_slot_1 || '09:00',
-          end_time:       d.end_time       || d.time_slot_3 || '23:00',
-          timezone:       d.timezone       || 'UTC',
-          is_active:      d.is_active      ?? true,
+          videos_per_day:     d.videos_per_day     || 3,
+          start_time:         d.start_time         || d.time_slot_1 || '09:00',
+          end_time:           d.end_time           || d.time_slot_3 || '23:00',
+          long_video_enabled: d.long_video_enabled ?? true,
+          long_video_time:    d.long_video_time    || '13:00',
+          timezone:           d.timezone           || 'UTC',
+          is_active:          d.is_active          ?? true,
         })
       })
       .catch(() => setError('Failed to load schedule settings'))
@@ -120,7 +124,7 @@ export default function Schedule() {
                   />
                   <span style={{
                     position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
-                    backgroundColor: schedule.is_active ? 'var(--brand-1)' : '#3f3f46',
+                    backgroundColor: schedule.is_active ? 'var(--brand-1)' : 'var(--toggle-off)',
                     transition: '.3s', borderRadius: 24,
                   }}>
                     <span style={{
@@ -132,9 +136,14 @@ export default function Schedule() {
                 </label>
               </div>
 
+              {/* Shorts Settings Header */}
+              <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 6, fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
+                📱 YouTube Shorts Automation
+              </div>
+
               {/* Videos Per Day */}
               <div className="form-group">
-                <label className="form-label">Videos Per Day</label>
+                <label className="form-label">Shorts Per Day</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <input
                     className="form-input"
@@ -147,17 +156,17 @@ export default function Schedule() {
                     required
                   />
                   <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                    videos (1 – 100)
+                    shorts (1 – 100)
                   </span>
                 </div>
                 <span className="form-hint">
-                  Videos will be spread evenly between start and end time.
+                  Shorts will be spread evenly between start and end time.
                 </span>
               </div>
 
               {/* Start Time */}
               <div className="form-group">
-                <label className="form-label">Start Time (UTC)</label>
+                <label className="form-label">Shorts Start Time (UTC)</label>
                 <input
                   className="form-input"
                   type="time"
@@ -165,12 +174,12 @@ export default function Schedule() {
                   onChange={setVal('start_time')}
                   required
                 />
-                <span className="form-hint">First video of the day will be generated at this time.</span>
+                <span className="form-hint">First Short of the day will be generated at this time.</span>
               </div>
 
               {/* End Time */}
               <div className="form-group">
-                <label className="form-label">End Time (UTC)</label>
+                <label className="form-label">Shorts End Time (UTC)</label>
                 <input
                   className="form-input"
                   type="time"
@@ -178,8 +187,59 @@ export default function Schedule() {
                   onChange={setVal('end_time')}
                   required
                 />
-                <span className="form-hint">Last video of the day will be generated at this time.</span>
+                <span className="form-hint">Last Short of the day will be generated at this time.</span>
               </div>
+
+              {/* Long Video Settings Header */}
+              <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 6, paddingTop: 10, fontWeight: 700, fontSize: 15, color: 'var(--brand-1)' }}>
+                🎬 Daily Full Video (Hindi 16:9 1080p)
+              </div>
+
+              {/* Enable Long Video toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(124,58,237,0.06)', padding: 14, borderRadius: 'var(--radius-md)', border: '1px solid rgba(124,58,237,0.2)' }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>Enable Daily Full Video</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Automatically produces 1 full 5-8 min Hindi video daily from worldwide trends
+                  </div>
+                </div>
+                <label style={{ position: 'relative', display: 'inline-block', width: 44, height: 24 }}>
+                  <input
+                    type="checkbox"
+                    checked={schedule.long_video_enabled}
+                    onChange={setVal('long_video_enabled')}
+                    style={{ opacity: 0, width: 0, height: 0 }}
+                  />
+                  <span style={{
+                    position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: schedule.long_video_enabled ? 'var(--brand-1)' : 'var(--toggle-off)',
+                    transition: '.3s', borderRadius: 24,
+                  }}>
+                    <span style={{
+                      position: 'absolute', height: 16, width: 16,
+                      left: schedule.long_video_enabled ? 24 : 4, bottom: 4,
+                      backgroundColor: 'white', transition: '.3s', borderRadius: '50%',
+                    }} />
+                  </span>
+                </label>
+              </div>
+
+              {/* Long Video Time */}
+              {schedule.long_video_enabled && (
+                <div className="form-group">
+                  <label className="form-label">Full Video Upload Time (UTC)</label>
+                  <input
+                    className="form-input"
+                    type="time"
+                    value={schedule.long_video_time}
+                    onChange={setVal('long_video_time')}
+                    required
+                  />
+                  <span className="form-hint">
+                    Default 13:00 UTC (1:00 PM UTC = 18:00 PKT / 18:30 IST).
+                  </span>
+                </div>
+              )}
 
               {/* Timezone */}
               <div className="form-group">
@@ -199,30 +259,52 @@ export default function Schedule() {
             <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 16, color: 'var(--brand-1)' }}>
               📅 Upload Schedule Preview
             </div>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
-              <strong>{schedule.videos_per_day}</strong> videos/day from <strong>{schedule.start_time}</strong> to <strong>{schedule.end_time}</strong> UTC
+
+            {/* Daily Full Video Badge */}
+            {schedule.long_video_enabled && (
+              <div style={{
+                marginBottom: 16, padding: '12px 14px', borderRadius: 8,
+                background: 'linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(79,70,229,0.12) 100%)',
+                border: '1px solid rgba(124,58,237,0.3)',
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--brand-1)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🎬</span> Daily Full Video (Hindi 16:9)
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Runs daily at <strong>{schedule.long_video_time || '13:00'} UTC</strong>
+                  {(() => {
+                    if (!schedule.long_video_time) return ''
+                    const [h, m] = schedule.long_video_time.split(':').map(Number)
+                    const pkt = (h + 5) % 24
+                    return ` (${String(pkt).padStart(2, '0')}:${String(m).padStart(2, '0')} PKT)`
+                  })()}
+                </div>
+              </div>
+            )}
+
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+              📱 <strong>{schedule.videos_per_day}</strong> Shorts/day from <strong>{schedule.start_time}</strong> to <strong>{schedule.end_time}</strong> UTC
             </div>
 
             {previewSlots.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 400, overflowY: 'auto' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 340, overflowY: 'auto' }}>
                 {previewSlots.map((slot, i) => (
                   <div key={i} style={{
                     display: 'flex', alignItems: 'center', gap: 12,
                     padding: '8px 12px', borderRadius: 8,
-                    background: 'rgba(124,58,237,0.07)',
-                    border: '1px solid rgba(124,58,237,0.15)',
+                    background: 'rgba(59,130,246,0.06)',
+                    border: '1px solid rgba(59,130,246,0.15)',
                   }}>
                     <span style={{
-                      background: 'var(--brand-1)', color: 'white',
+                      background: '#2563eb', color: 'white',
                       borderRadius: '50%', width: 22, height: 22,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: 11, fontWeight: 700, flexShrink: 0,
                     }}>
                       {i + 1}
                     </span>
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>{slot} UTC</span>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{slot} UTC (Short)</span>
                     <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                      {/* PKT = UTC + 5 */}
                       {(() => {
                         const [h, m] = slot.split(':').map(Number)
                         const pkt = ((h + 5) % 24)
@@ -234,12 +316,12 @@ export default function Schedule() {
               </div>
             ) : (
               <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                Set videos per day to see preview
+                Set shorts per day to see preview
               </div>
             )}
 
             <div style={{ marginTop: 16, padding: '10px 14px', borderRadius: 8, background: 'rgba(34,197,94,0.07)', border: '1px solid rgba(34,197,94,0.2)', fontSize: 12, color: 'var(--text-secondary)' }}>
-              💡 <strong>Tip:</strong> Pakistan time is UTC+5. If you set start at <strong>09:00 UTC</strong>, that is <strong>14:00 PKT</strong>.
+              💡 <strong>Tip:</strong> Pakistan time is UTC+5. 13:00 UTC = 18:00 (6:00 PM) PKT.
             </div>
           </div>
 

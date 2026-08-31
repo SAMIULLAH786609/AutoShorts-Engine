@@ -424,17 +424,26 @@ def split_script_for_subtitles(
     return subtitles
 
 
+def _resolve_font_path() -> str:
+    candidates = [
+        FONT_PATH,
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf",
+    ]
+    for p in candidates:
+        if p and Path(p).exists():
+            return p
+    return ""
+
+
 def create_subtitle_clips(
     script: str,
     total_duration: float,
     clips_to_close: list,
 ) -> list[TextClip]:
     """Create styled subtitle clips near the bottom of the video."""
-    if not Path(FONT_PATH).exists():
-        raise FileNotFoundError(
-            f"Font not found: {FONT_PATH}\n"
-            "Update FONT_PATH in make_video.py."
-        )
+    active_font = _resolve_font_path() or FONT_PATH
 
     subtitle_items = split_script_for_subtitles(script, total_duration)
     clips: list[TextClip] = []
@@ -448,7 +457,7 @@ def create_subtitle_clips(
     for start, end, text in subtitle_items:
         subtitle = (
             TextClip(
-                font=FONT_PATH,
+                font=active_font,
                 text=text,
                 font_size=font_size,
                 color="white",

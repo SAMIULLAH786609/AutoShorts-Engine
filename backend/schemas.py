@@ -116,6 +116,7 @@ class JobResponse(BaseModel):
     error_message:    Optional[str]
     retry_count:      int
     duration:         float
+    video_type:       Optional[str] = "short"
     trigger:          str
     created_at:       datetime
     started_at:       Optional[datetime]
@@ -131,6 +132,7 @@ class JobResponse(BaseModel):
 
 class TriggerJobRequest(BaseModel):
     channel_id: Optional[str] = None   # None = use first connected channel
+    video_type: Optional[str] = "short" # "short" | "long"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -138,29 +140,33 @@ class TriggerJobRequest(BaseModel):
 # ─────────────────────────────────────────────────────────────
 
 class ScheduleResponse(BaseModel):
-    id:             str
-    videos_per_day: int
-    time_slot_1:    Optional[str] = None
-    time_slot_2:    Optional[str] = None
-    time_slot_3:    Optional[str] = None
-    start_time:     Optional[str] = "09:00"
-    end_time:       Optional[str] = "23:00"
-    timezone:       str
-    is_active:      bool
+    id:                 str
+    videos_per_day:     int
+    time_slot_1:        Optional[str] = None
+    time_slot_2:        Optional[str] = None
+    time_slot_3:        Optional[str] = None
+    start_time:         Optional[str] = "09:00"
+    end_time:           Optional[str] = "23:00"
+    long_video_enabled: Optional[bool] = True
+    long_video_time:    Optional[str] = "13:00"
+    timezone:           str
+    is_active:          bool
 
     model_config = {"from_attributes": True}
 
 
 class UpdateScheduleRequest(BaseModel):
-    videos_per_day: Optional[int]  = Field(None, ge=1, le=100)
-    start_time:     Optional[str]  = None
-    end_time:       Optional[str]  = None
+    videos_per_day:     Optional[int]  = Field(None, ge=1, le=100)
+    start_time:         Optional[str]  = None
+    end_time:           Optional[str]  = None
+    long_video_enabled: Optional[bool] = None
+    long_video_time:    Optional[str]  = None
     # Legacy slots still accepted
-    time_slot_1:    Optional[str]  = None
-    time_slot_2:    Optional[str]  = None
-    time_slot_3:    Optional[str]  = None
-    timezone:       Optional[str]  = None
-    is_active:      Optional[bool] = None
+    time_slot_1:        Optional[str]  = None
+    time_slot_2:        Optional[str]  = None
+    time_slot_3:        Optional[str]  = None
+    timezone:           Optional[str]  = None
+    is_active:          Optional[bool] = None
 
 
 # ─────────────────────────────────────────────────────────────

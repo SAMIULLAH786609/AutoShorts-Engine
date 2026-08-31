@@ -43,12 +43,28 @@ Examples:
     )
 
     parser.add_argument(
+        "--long",
+        action="store_true",
+        help="Produce 1 long-form Hindi video (16:9 1080p, worldwide trends)",
+    )
+
+    parser.add_argument(
         "--schedule",
         action="store_true",
         help="Start the APScheduler daemon instead of running once",
     )
 
     args = parser.parse_args()
+
+    if args.long:
+        log_step(log, "LONG VIDEO MODE", "Starting 1 long-form Hindi video generation…")
+        from autoshorts.long_video_pipeline import run_long_video_pipeline
+        result = run_long_video_pipeline()
+        if result:
+            log.info("\n✅ Long video uploaded successfully: https://youtu.be/%s", result.youtube_video_id)
+        else:
+            log.warning("\n⚠️ Long video generation was skipped or failed.")
+        return
 
     if args.schedule:
         log_step(log, "SCHEDULER MODE", "Starting APScheduler daemon…")

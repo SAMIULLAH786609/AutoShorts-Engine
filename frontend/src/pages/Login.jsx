@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import ThemeToggleFloating from '../components/ThemeToggleFloating'
 
 export default function Login() {
   const [email, setEmail]       = useState('')
@@ -26,6 +27,7 @@ export default function Login() {
 
   return (
     <div className="auth-page">
+      <ThemeToggleFloating />
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">🎬</div>
@@ -55,7 +57,7 @@ export default function Login() {
           <div className="form-group">
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
               <label className="form-label">Password</label>
-              <Link to="/forgot-password" style={{fontSize:12, color:'#a78bfa', textDecoration:'none'}}>
+              <Link to="/forgot-password" style={{fontSize:12, color:'var(--link)', textDecoration:'none'}}>
                 Forgot password?
               </Link>
             </div>

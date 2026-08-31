@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 
 const NAV = [
   { to: '/dashboard', icon: '📊', label: 'Dashboard' },
@@ -9,8 +10,9 @@ const NAV = [
 ]
 
 export default function Sidebar() {
-  const { user, logout } = useAuth()
-  const navigate         = useNavigate()
+  const { user, logout }   = useAuth()
+  const { theme, toggleTheme } = useTheme()
+  const navigate            = useNavigate()
 
   const handleLogout = () => { logout(); navigate('/login') }
 
@@ -36,6 +38,14 @@ export default function Sidebar() {
       </div>
 
       <div className="sidebar-bottom">
+        <button
+          className="nav-item theme-toggle"
+          onClick={toggleTheme}
+          title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+        >
+          <span style={{fontSize:16}}>{theme === 'light' ? '🌙' : '☀️'}</span>
+          {theme === 'light' ? 'Dark mode' : 'Light mode'}
+        </button>
         <div className="sidebar-user">
           <div className="sidebar-avatar">{initials}</div>
           <div className="sidebar-user-info">
@@ -43,7 +53,7 @@ export default function Sidebar() {
             <div className="sidebar-user-email">{user?.email}</div>
           </div>
         </div>
-        <button className="nav-item" onClick={handleLogout} style={{marginTop:4, color:'#ef4444'}}>
+        <button className="nav-item" onClick={handleLogout} style={{marginTop:4, color:'var(--red)'}}>
           <span style={{fontSize:16}}>🚪</span>
           Sign out
         </button>

@@ -9,10 +9,19 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.config import DATABASE_URL
 
-# PostgreSQL engine — connect_args for SSL required by Supabase
+# Bug 3 fixed: sslmode=require ONLY for remote/production databases (e.g. Supabase).
+# Local PostgreSQL (localhost / 127.0.0.1) does not support SSL and will crash
+# with "SSL connection is not supported" if sslmode=require is always set.
+_is_local_db = any(
+    host in DATABASE_URL
+    for host in ("localhost", "127.0.0.1", "0.0.0.0")
+)
+_connect_args = {} if _is_local_db else {"sslmode": "require"}
+
+# PostgreSQL engine
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"sslmode": "require"},
+    connect_args=_connect_args,
     pool_pre_ping=True,      # reconnect if connection dropped
     pool_recycle=300,        # recycle connections every 5 min
     echo=False,

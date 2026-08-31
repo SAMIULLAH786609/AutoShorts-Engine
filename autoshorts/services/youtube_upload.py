@@ -97,20 +97,20 @@ def upload_video(
         raise ValueError(f"privacy_status must be one of {allowed}")
 
     hashtags = hashtags or []
+    plan_tags = [t.strip().lstrip("#") for t in hashtags if t.strip()]
 
-    # Always include Shorts-critical tags
-    core_tags = ["Shorts", "Short", "YouTubeShorts", "viral", "facts", "trending"]
-    all_tags  = core_tags + [t.strip().lstrip("#") for t in hashtags if t.strip()]
-    # YouTube allows max 500 chars total in tags
-    tags_list = list(dict.fromkeys(all_tags))[:30]   # dedupe + limit
+    # These 3 pools ensure maximum YouTube algorithm discovery:
+    # - Core Shorts tags: REQUIRED for Shorts feed classification
+    # - Guaranteed viral tags: fyp, trending, explore always boost impressions
+    # - Niche tags: come from Gemini's plan_tags (topic-specific)
+    guaranteed_tags = ["Shorts", "Short", "YouTubeShorts", "fyp", "viral", "trending", "explore"]
+    all_tags = list(dict.fromkeys(guaranteed_tags + plan_tags))[:30]
 
-    # Build hashtag line for description — #Shorts MUST appear in description
-    # for YouTube to classify the video as a Short in the Shorts feed
-    hash_core = "#Shorts #Short #viral #facts #trending"
-    extra_tags = " ".join(
-        f"#{t.strip().lstrip('#')}" for t in hashtags if t.strip()
-    )
-    hashtag_line = f"{hash_core} {extra_tags}".strip()
+    # Description hashtags: #Shorts MUST appear — without it YouTube won't
+    # classify the video as a Short → 0 Shorts feed impressions.
+    hash_guaranteed = "#Shorts #Short #YouTubeShorts #fyp #viral #trending"
+    extra_tags = " ".join(f"#{t}" for t in plan_tags if t not in {"Shorts", "Short", "YouTubeShorts", "fyp", "viral", "trending"})
+    hashtag_line = f"{hash_guaranteed} {extra_tags}".strip()
 
     final_description = description.strip()
     final_description += f"\n\n{hashtag_line}"
@@ -119,10 +119,10 @@ def upload_video(
 
     request_body = {
         "snippet": {
-            "title":       title[:100],
-            "description": final_description[:5000],
-            "tags":        tags_list,       # ← critical for search discovery
-            "categoryId":  "27",            # 27 = Education (better for facts/science Shorts)
+            "title":           title[:100],
+            "description":     final_description[:5000],
+            "tags":            all_tags,       # ← critical for search discovery
+            "categoryId":      "27",           # 27 = Education
             "defaultLanguage": "en",
         },
         "status": {

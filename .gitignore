@@ -52,3 +52,5 @@ dist/
 frontend/node_modules/
 frontend/dist/
 .eslintcache
+.claude/
+scratch/

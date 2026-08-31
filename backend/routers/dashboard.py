@@ -44,11 +44,24 @@ def get_dashboard(
         .all()
     )
 
-    # Compute next scheduled run time (simplified)
+    # Bug 9 fixed: Use actual start_time/end_time and _compute_slots() to compute
+    # the real next scheduled run — not the legacy time_slot_1 field.
     schedule = current_user.schedule
     next_scheduled = None
     if schedule and schedule.is_active:
-        next_scheduled = f"Today at {schedule.time_slot_1} UTC"
+        from backend.scheduler import _compute_slots
+        from datetime import datetime, timezone
+        now_time = datetime.now(timezone.utc).strftime("%H:%M")
+        start = schedule.start_time or schedule.time_slot_1 or "09:00"
+        end   = schedule.end_time   or schedule.time_slot_3 or "23:00"
+        vpd   = schedule.videos_per_day or 1
+        slots = _compute_slots(start, end, vpd)
+        # Find the next slot that hasn't passed yet today
+        future_slots = [s for s in slots if s > now_time]
+        if future_slots:
+            next_scheduled = f"Today at {future_slots[0]} UTC"
+        else:
+            next_scheduled = f"Tomorrow at {slots[0]} UTC" if slots else None
 
     return DashboardStats(
         total_videos      = total,
@@ -104,14 +117,16 @@ def update_schedule(
         db.add(schedule)
         db.flush()
 
-    if body.videos_per_day is not None: schedule.videos_per_day = body.videos_per_day
-    if body.start_time     is not None: schedule.start_time     = body.start_time
-    if body.end_time       is not None: schedule.end_time       = body.end_time
-    if body.time_slot_1    is not None: schedule.time_slot_1    = body.time_slot_1
-    if body.time_slot_2    is not None: schedule.time_slot_2    = body.time_slot_2
-    if body.time_slot_3    is not None: schedule.time_slot_3    = body.time_slot_3
-    if body.timezone       is not None: schedule.timezone       = body.timezone
-    if body.is_active      is not None: schedule.is_active      = body.is_active
+    if body.videos_per_day     is not None: schedule.videos_per_day     = body.videos_per_day
+    if body.start_time         is not None: schedule.start_time         = body.start_time
+    if body.end_time           is not None: schedule.end_time           = body.end_time
+    if body.long_video_enabled is not None: schedule.long_video_enabled = body.long_video_enabled
+    if body.long_video_time    is not None: schedule.long_video_time    = body.long_video_time
+    if body.time_slot_1        is not None: schedule.time_slot_1        = body.time_slot_1
+    if body.time_slot_2        is not None: schedule.time_slot_2        = body.time_slot_2
+    if body.time_slot_3        is not None: schedule.time_slot_3        = body.time_slot_3
+    if body.timezone           is not None: schedule.timezone           = body.timezone
+    if body.is_active          is not None: schedule.is_active          = body.is_active
 
     db.commit()
     db.refresh(schedule)

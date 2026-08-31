@@ -138,7 +138,10 @@ class VideoJob(Base):
     # Duration (seconds)
     duration         = Column(Float, default=0.0)
 
-    # Trigger type: manual | scheduled
+    # Video Type: short (9:16 vertical) | long (16:9 full HD)
+    video_type       = Column(String(20), default="short")
+
+    # Trigger type: manual | scheduled | retry
     trigger          = Column(String(20), default="manual")
 
     created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
@@ -166,9 +169,13 @@ class UserSchedule(Base):
     time_slot_2    = Column(String(5), default="15:00")
     time_slot_3    = Column(String(5), default="21:00")
 
-    # New flexible schedule: distribute videos_per_day evenly between start and end
+    # Flexible Shorts schedule
     start_time     = Column(String(5), default="09:00")   # HH:MM UTC
     end_time       = Column(String(5), default="23:00")   # HH:MM UTC
+
+    # Daily Long-Form Video (Hindi 16:9) Schedule
+    long_video_enabled = Column(Boolean,   default=True)
+    long_video_time    = Column(String(5), default="13:00") # 1:00 PM UTC
 
     timezone       = Column(String(50), default="UTC")
     is_active      = Column(Boolean, default=True)

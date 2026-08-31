@@ -148,13 +148,28 @@ def fetch_gdelt_trends() -> list[TrendItem]:
 # ---------------------------------------------------------------------------
 
 RSS_FEEDS: dict[str, str] = {
-    "BBC World":         "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "Reuters World":     "https://feeds.reuters.com/reuters/worldNews",
-    "NASA":              "https://www.nasa.gov/rss/dyn/breaking_news.rss",
-    "Google News":       "https://news.google.com/rss",
-    "Al Jazeera":        "https://www.aljazeera.com/xml/rss/all.xml",
-    "TechCrunch":        "https://techcrunch.com/feed/",
-    "The Verge":         "https://www.theverge.com/rss/index.xml",
+    # Breaking news
+    "BBC World":          "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "BBC Science":        "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+    "Reuters World":      "https://feeds.reuters.com/reuters/worldNews",
+    "Al Jazeera":         "https://www.aljazeera.com/xml/rss/all.xml",
+    "Google News Top":    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+    "Google News Sci":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RZU0FtVnVHZ0pWVXlnQVAB",
+    "Google News Tech":   "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FtVnVHZ0pWVXlnQVAB",
+    # Science & Space
+    "NASA":               "https://www.nasa.gov/rss/dyn/breaking_news.rss",
+    "Space.com":          "https://www.space.com/feeds/all",
+    "IFLScience":         "https://www.iflscience.com/rss/",
+    "ScienceAlert":       "https://www.sciencealert.com/feed",
+    "Futurism":           "https://futurism.com/feed",
+    # Tech & Viral
+    "TechCrunch":         "https://techcrunch.com/feed/",
+    "The Verge":          "https://www.theverge.com/rss/index.xml",
+    "Mashable":           "https://mashable.com/feeds/rss/all",
+    "Interesting Eng":    "https://interestingengineering.com/feed",
+    # Nature & Humans
+    "Nat Geo":            "https://www.nationalgeographic.com/pages/article/rss-feed",
+    "Smithsonian Mag":    "https://www.smithsonianmag.com/rss/latest_articles/",
 }
 
 
@@ -166,25 +181,86 @@ def fetch_rss_trends() -> list[TrendItem]:
         try:
             parsed = feedparser.parse(feed_url)
 
-            for entry in parsed.entries[:15]:
+            for entry in parsed.entries[:20]:
                 title = str(entry.get("title", "")).strip()
                 if not title:
                     continue
+
+                summary = str(entry.get("summary", entry.get("description", ""))).strip()
 
                 results.append(TrendItem(
                     title=title,
                     source=source_name,
                     source_url=str(entry.get("link", "")),
                     region="WORLD",
-                    popularity=1.0,
+                    popularity=2.0,   # RSS items are always fresh/recent
                     published_at=str(entry.get("published", "")),
-                    description=str(entry.get("summary", ""))[:300],
+                    description=summary[:300],
                 ))
 
         except Exception as exc:
             log.warning("RSS feed failed (%s): %s", source_name, exc)
 
     log.info("RSS trends: collected %d items", len(results))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Source 3b: Google Trends (real-time, no API key needed)
+# ---------------------------------------------------------------------------
+
+GOOGLE_TRENDS_REGIONS = [
+    ("US", "United States"),
+    ("GB", "United Kingdom"),
+    ("AU", "Australia"),
+    ("CA", "Canada"),
+    ("IN", "India"),
+]
+
+
+def fetch_google_trends() -> list[TrendItem]:
+    """Fetch Google Trends daily search trends via RSS (no API key required)."""
+    results: list[TrendItem] = []
+
+    for geo_code, geo_name in GOOGLE_TRENDS_REGIONS:
+        try:
+            url = f"https://trends.google.com/trends/trendingsearches/daily/rss?geo={geo_code}"
+            parsed = feedparser.parse(url)
+
+            for entry in parsed.entries[:20]:
+                title = str(entry.get("title", "")).strip()
+                if not title:
+                    continue
+
+                # Google Trends RSS includes traffic estimate in the <ht:approx_traffic>
+                # element, which feedparser exposes as entry.ht_approx_traffic (not in "tags",
+                # which only holds <category> elements).
+                traffic = 1000.0
+                try:
+                    raw_traffic = entry.get("ht_approx_traffic", "")
+                    if raw_traffic:
+                        traffic = float(
+                            str(raw_traffic).replace("+", "").replace(",", "").strip() or "1000"
+                        )
+                except Exception:
+                    pass
+
+                summary = str(entry.get("summary", "")).strip()
+
+                results.append(TrendItem(
+                    title=title,
+                    source=f"google_trends/{geo_code}",
+                    source_url=str(entry.get("link", "")),
+                    region=geo_code,
+                    popularity=traffic,   # real search volume!
+                    published_at=str(entry.get("published", "")),
+                    description=summary[:300],
+                ))
+
+        except Exception as exc:
+            log.warning("Google Trends failed for %s: %s", geo_name, exc)
+
+    log.info("Google Trends: collected %d items", len(results))
     return results
 
 
@@ -372,18 +448,22 @@ def collect_worldwide_trends() -> list[dict[str, Any]]:
     Returns a list of dicts (one per trend item) sorted by popularity
     descending. Each source is attempted independently so that a single
     failing API never blocks the whole collection.
+
+    Deduplication is applied to avoid sending near-identical headlines
+    to Gemini, which wastes context and produces repetitive ideas.
     """
     log.info("Starting worldwide trend collection...")
 
     combined: list[TrendItem] = []
 
     for fetcher in (
-        fetch_youtube_trends,
-        fetch_gdelt_trends,
-        fetch_rss_trends,
-        fetch_reddit_trends,
-        fetch_hackernews_trends,
-        fetch_newsapi_trends,
+        fetch_google_trends,       # real-time Google search volume (highest signal)
+        fetch_youtube_trends,      # YouTube most-popular (multi-region)
+        fetch_gdelt_trends,        # worldwide news
+        fetch_rss_trends,          # curated editorial sources
+        fetch_reddit_trends,       # community viral content
+        fetch_hackernews_trends,   # tech community
+        fetch_newsapi_trends,      # optional NewsAPI
     ):
         try:
             items = fetcher()
@@ -394,5 +474,26 @@ def collect_worldwide_trends() -> list[dict[str, Any]]:
     # Sort by popularity descending
     combined.sort(key=lambda item: item.popularity, reverse=True)
 
-    log.info("Total trends collected: %d", len(combined))
-    return [asdict(item) for item in combined]
+    # Deduplicate: skip items whose title is too similar to an already-kept item
+    seen_titles: list[str] = []
+    deduped: list[TrendItem] = []
+    for item in combined:
+        title_lower = item.title.lower().strip()
+        # Simple word-overlap check (avoid near-duplicate headlines)
+        is_dup = False
+        for seen in seen_titles:
+            words_item = set(title_lower.split())
+            words_seen = set(seen.split())
+            overlap = len(words_item & words_seen) / max(len(words_item | words_seen), 1)
+            if overlap > 0.65:
+                is_dup = True
+                break
+        if not is_dup:
+            seen_titles.append(title_lower)
+            deduped.append(item)
+
+    log.info(
+        "Trends: %d raw -> %d after deduplication",
+        len(combined), len(deduped),
+    )
+    return [asdict(item) for item in deduped]

@@ -30,11 +30,29 @@ export default function Dashboard() {
     try {
       const r = await api.get('/dashboard')
       setStats(r.data)
+      autoRefreshStats(r.data?.recent_jobs || [])
     } catch {
       setError('Failed to load dashboard')
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // Fetch views/likes/comments automatically for uploaded videos that
+  // haven't had their stats pulled yet (or not in the last 10 minutes),
+  // instead of requiring a manual click on every single row.
+  const autoRefreshStats = useCallback((rows) => {
+    const STALE_MS = 10 * 60 * 1000
+    const now = Date.now()
+    const targets = rows.filter(j =>
+      j.status === 'complete' &&
+      j.youtube_video_id &&
+      (!j.yt_stats_updated || now - new Date(j.yt_stats_updated).getTime() > STALE_MS)
+    )
+
+    targets.forEach((job, i) => {
+      setTimeout(() => { handleRefreshStats(job.id, { silent: true }) }, i * 400)
+    })
   }, [])
 
   useEffect(() => { fetchStats() }, [fetchStats])
@@ -47,17 +65,18 @@ export default function Dashboard() {
     return () => clearInterval(id)
   }, [stats, fetchStats])
 
-  const triggerJob = async () => {
+  const triggerJob = async (videoType = 'short') => {
     if (!stats?.channel_connected) {
       navigate('/settings')
       return
     }
     setError('')
     setSuccess('')
-    setTriggering(true)
+    setTriggering(videoType)
     try {
-      await api.post('/jobs/trigger', {})
-      setSuccess('🎬 Video generation started! Refresh in a few minutes to see progress.')
+      await api.post('/jobs/trigger', { video_type: videoType })
+      const label = videoType === 'long' ? 'Full Hindi 1080p Video' : 'Short'
+      setSuccess(`🎬 ${label} generation started! Refresh in a few minutes to see progress.`)
       await fetchStats()
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to trigger video generation')
@@ -79,7 +98,7 @@ export default function Dashboard() {
     }
   }
 
-  const handleRefreshStats = async (jobId) => {
+  const handleRefreshStats = async (jobId, { silent = false } = {}) => {
     setRefreshing(r => ({ ...r, [jobId]: true }))
     try {
       const res = await api.post(`/jobs/${jobId}/refresh-stats`)
@@ -89,7 +108,9 @@ export default function Dashboard() {
         recent_jobs: prev.recent_jobs.map(j => j.id === jobId ? res.data : j),
       }))
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
+      // Auto-refresh runs quietly in the background — only surface an
+      // error banner when the user explicitly clicked the button.
+      if (!silent) setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
     } finally {
       setRefreshing(r => ({ ...r, [jobId]: false }))
     }
@@ -105,10 +126,10 @@ export default function Dashboard() {
   )
 
   const statCards = [
-    { icon: '🎬', label: 'Total Videos',    value: stats?.total_videos    ?? 0, color: '#7c3aed', bg: 'rgba(124,58,237,0.12)' },
-    { icon: '✅', label: 'Uploaded',         value: stats?.uploaded_videos ?? 0, color: '#22c55e', bg: 'rgba(34,197,94,0.12)'  },
-    { icon: '❌', label: 'Failed',           value: stats?.failed_videos   ?? 0, color: '#ef4444', bg: 'rgba(239,68,68,0.12)'  },
-    { icon: '⏳', label: 'In Progress',     value: stats?.pending_videos  ?? 0, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+    { icon: '🎬', label: 'Total Videos',    value: stats?.total_videos    ?? 0, color: 'var(--brand-1)', bg: 'rgba(124,58,237,0.12)' },
+    { icon: '✅', label: 'Uploaded',         value: stats?.uploaded_videos ?? 0, color: 'var(--green)',   bg: 'rgba(34,197,94,0.12)'  },
+    { icon: '❌', label: 'Failed',           value: stats?.failed_videos   ?? 0, color: 'var(--red)',     bg: 'rgba(239,68,68,0.12)'  },
+    { icon: '⏳', label: 'In Progress',     value: stats?.pending_videos  ?? 0, color: 'var(--yellow)',  bg: 'rgba(245,158,11,0.12)' },
   ]
 
   return (
@@ -125,7 +146,7 @@ export default function Dashboard() {
           <div className="connect-banner">
             <div>
               <div style={{fontWeight:600, marginBottom:4}}>📺 Connect your YouTube channel</div>
-              <div style={{fontSize:13, color:'#9898b0'}}>
+              <div style={{fontSize:13, color:'var(--text-secondary)'}}>
                 Connect your channel so AutoShorts can upload videos automatically
               </div>
             </div>
@@ -149,22 +170,42 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Schedule info + trigger */}
-        <div className="card" style={{marginBottom:24, display:'flex', alignItems:'center', justifyContent:'space-between', gap:16}}>
+        {/* Schedule info + trigger buttons */}
+        <div className="card" style={{marginBottom:24, display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, flexWrap:'wrap'}}>
           <div>
-            <div style={{fontWeight:600, marginBottom:4}}>🗓️ Next scheduled video</div>
-            <div style={{fontSize:14, color:'#9898b0'}}>
-              {stats?.next_scheduled ?? 'No active schedule — enable in Schedule page'}
+            <div style={{fontWeight:600, marginBottom:4}}>🗓️ Automated Schedule</div>
+            <div style={{fontSize:14, color:'var(--text-secondary)'}}>
+              {stats?.next_scheduled ? (
+                <>Next Short: <strong>{stats.next_scheduled}</strong></>
+              ) : 'No active schedule — configure in Schedule page'}
             </div>
           </div>
-          <button
-            className="btn btn-primary"
-            onClick={triggerJob}
-            disabled={triggering}
-            id="trigger-video-btn"
-          >
-            {triggering ? <><span className="spinner" />Starting…</> : '▶ Generate Video Now'}
-          </button>
+          <div style={{display:'flex', gap:10, alignItems:'center'}}>
+            <button
+              className="btn btn-primary"
+              onClick={() => triggerJob('short')}
+              disabled={!!triggering}
+              id="trigger-short-btn"
+              title="Generate a 30-second YouTube Short"
+            >
+              {triggering === 'short' ? <><span className="spinner" />Creating Short…</> : '⚡ Generate Short'}
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => triggerJob('long')}
+              disabled={!!triggering}
+              id="trigger-long-btn"
+              style={{
+                background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)',
+                color: 'white',
+                border: 'none',
+                boxShadow: '0 2px 8px rgba(124,58,237,0.3)',
+              }}
+              title="Generate a 5-8 min 16:9 1080p Full Hindi Video"
+            >
+              {triggering === 'long' ? <><span className="spinner" />Creating Full Video…</> : '🎬 Generate Full Video (Hindi)'}
+            </button>
+          </div>
         </div>
 
         {/* Recent jobs */}
@@ -178,13 +219,14 @@ export default function Dashboard() {
             <div className="empty-state">
               <div className="empty-state-icon">🎬</div>
               <h3>No videos yet</h3>
-              <p>Click "Generate Video Now" to create your first AI-powered YouTube Short</p>
+              <p>Click "Generate Short" or "Generate Full Video" to create your first video</p>
             </div>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>Title</th>
+                  <th>Format</th>
                   <th>Status</th>
                   <th>Trigger</th>
                   <th>YouTube</th>
@@ -202,30 +244,41 @@ export default function Dashboard() {
                       <div style={{fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
                         {job.title || job.topic || '—'}
                       </div>
-                      {job.style && <div style={{fontSize:12,color:'#9898b0',marginTop:2}}>{job.style}</div>}
+                      {job.style && <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{job.style}</div>}
+                    </td>
+                    <td>
+                      {job.video_type === 'long' ? (
+                        <span className="badge" style={{background:'rgba(124,58,237,0.15)', color:'var(--brand-1)', fontWeight:600, border:'1px solid rgba(124,58,237,0.3)'}}>
+                          🎥 16:9 Full
+                        </span>
+                      ) : (
+                        <span className="badge" style={{background:'rgba(59,130,246,0.15)', color:'#2563eb', fontWeight:600, border:'1px solid rgba(59,130,246,0.3)'}}>
+                          📱 9:16 Short
+                        </span>
+                      )}
                     </td>
                     <td>{STATUS_BADGE[job.status] ?? <span className="badge">{job.status}</span>}</td>
-                    <td><span style={{fontSize:12,color:'#9898b0',textTransform:'capitalize'}}>{job.trigger}</span></td>
+                    <td><span style={{fontSize:12,color:'var(--text-secondary)',textTransform:'capitalize'}}>{job.trigger}</span></td>
                     <td>
                       {job.youtube_url
                         ? <a href={job.youtube_url} target="_blank" rel="noreferrer"
-                            style={{color:'#a78bfa', textDecoration:'none', fontSize:13}}>
+                            style={{color:'var(--link)', textDecoration:'none', fontSize:13}}>
                             View ↗
                           </a>
-                        : <span style={{color:'#5a5a70', fontSize:13}}>—</span>
+                        : <span style={{color:'var(--text-muted)', fontSize:13}}>—</span>
                       }
                     </td>
                     {/* YouTube live stats */}
-                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_views ? '#a78bfa' : '#5a5a70', fontSize:13}}>
+                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_views ? 'var(--link)' : 'var(--text-muted)', fontSize:13}}>
                       {fmtNum(job.yt_views)}
                     </td>
-                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_likes ? '#22c55e' : '#5a5a70', fontSize:13}}>
+                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_likes ? 'var(--green)' : 'var(--text-muted)', fontSize:13}}>
                       {fmtNum(job.yt_likes)}
                     </td>
-                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_comments ? '#f59e0b' : '#5a5a70', fontSize:13}}>
+                    <td style={{textAlign:'center', fontWeight:600, color: job.yt_comments ? 'var(--yellow)' : 'var(--text-muted)', fontSize:13}}>
                       {fmtNum(job.yt_comments)}
                     </td>
-                    <td style={{fontSize:12,color:'#9898b0', whiteSpace:'nowrap'}}>
+                    <td style={{fontSize:12,color:'var(--text-secondary)', whiteSpace:'nowrap'}}>
                       {new Date(job.created_at).toLocaleString()}
                     </td>
                     <td style={{display:'flex', gap:4, alignItems:'center'}}>

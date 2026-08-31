@@ -290,7 +290,8 @@ def _step_save_to_db(
     thumbnail_path: Path,
     youtube_video_id: str,
     trends: list[dict],
-) -> None:
+) -> float:
+    """Save video metadata to DB. Returns computed duration in seconds."""
     log_step(log, "DATABASE", "Saving metadata…")
 
     topic = topic_data["topic"]
@@ -333,6 +334,7 @@ def _step_save_to_db(
     )
 
     log.info("Metadata saved for video ID: %s", youtube_video_id)
+    return duration
 
 
 # ---------------------------------------------------------------------------
@@ -390,8 +392,8 @@ def run_pipeline() -> VideoResult:
         # 9. Upload
         youtube_video_id = _step_upload(plan, video_path)
 
-        # 10. Save to DB
-        _step_save_to_db(
+        # 10. Save to DB (returns actual duration from ffprobe)
+        video_duration = _step_save_to_db(
             topic_data, plan, video_path, thumbnail_path,
             youtube_video_id, trends,
         )
@@ -415,7 +417,7 @@ def run_pipeline() -> VideoResult:
             upload_status="uploaded",
             trend_source=trends[0].get("source", "") if trends else "",
             script_hash=script_hash(plan.script),
-            duration=0.0,
+            duration=video_duration,   # Bug 8 fixed: actual ffprobe duration
         )
 
     except PipelineError as exc:
@@ -438,18 +440,11 @@ def run_pipeline() -> VideoResult:
         raise PipelineError(f"Unexpected error: {exc}") from exc
 
     finally:
-        # Wipe all files from temporary folders to guarantee 0MB usage
+        # Bug 1 fixed: Only wipe TEMPORARY download files.
+        # Output video and thumbnail are intentionally kept — their paths
+        # are already stored in the DB and returned in VideoResult.
+        # Removing them here would make local_path invalid immediately.
         _clean_downloads()
-        try:
-            if video_path and video_path.exists():
-                video_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
-            if thumbnail_path and thumbnail_path.exists():
-                thumbnail_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def run_daily_batch(count: int = DAILY_VIDEO_COUNT) -> list[VideoResult]:

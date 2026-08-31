@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../api/client'
+import ThemeToggleFloating from '../components/ThemeToggleFloating'
 
 export default function ResetPassword() {
   const [searchParams]            = useSearchParams()
@@ -32,6 +33,7 @@ export default function ResetPassword() {
 
   if (!token) return (
     <div className="auth-page">
+      <ThemeToggleFloating />
       <div className="auth-card">
         <div className="alert alert-error">Invalid reset link. Please request a new one.</div>
         <div className="auth-footer" style={{marginTop:16}}><Link to="/forgot-password">Request new link</Link></div>
@@ -41,6 +43,7 @@ export default function ResetPassword() {
 
   return (
     <div className="auth-page">
+      <ThemeToggleFloating />
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">🎬</div>

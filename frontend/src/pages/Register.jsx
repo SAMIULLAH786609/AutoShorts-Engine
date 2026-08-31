@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import ThemeToggleFloating from '../components/ThemeToggleFloating'
 
 export default function Register() {
   const [form, setForm]       = useState({ name:'', email:'', password:'' })
@@ -28,6 +29,7 @@ export default function Register() {
 
   return (
     <div className="auth-page">
+      <ThemeToggleFloating />
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">🎬</div>

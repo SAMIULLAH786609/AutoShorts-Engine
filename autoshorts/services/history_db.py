@@ -44,57 +44,61 @@ def get_connection() -> sqlite3.Connection:
 
 def initialize_database() -> None:
     """Create all tables if they do not already exist, then migrate."""
-    with get_connection() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS topics (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                topic_hash   TEXT    NOT NULL UNIQUE,
-                topic        TEXT    NOT NULL,
-                style        TEXT,
-                source_type  TEXT,
-                source_urls  TEXT,
-                score        REAL    DEFAULT 0,
-                status       TEXT    NOT NULL DEFAULT 'selected',
-                created_at   TEXT    NOT NULL
-            );
+    conn = get_connection()
+    try:
+        with conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS topics (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic_hash   TEXT    NOT NULL UNIQUE,
+                    topic        TEXT    NOT NULL,
+                    style        TEXT,
+                    source_type  TEXT,
+                    source_urls  TEXT,
+                    score        REAL    DEFAULT 0,
+                    status       TEXT    NOT NULL DEFAULT 'selected',
+                    created_at   TEXT    NOT NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS videos (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                topic_hash       TEXT    NOT NULL,
-                title            TEXT,
-                description      TEXT,
-                keywords         TEXT,
-                hashtags         TEXT,
-                local_path       TEXT,
-                thumbnail_path   TEXT,
-                youtube_video_id TEXT,
-                platform         TEXT    DEFAULT 'youtube',
-                upload_status    TEXT    DEFAULT 'pending',
-                duration         REAL    DEFAULT 0,
-                script_hash      TEXT,
-                trend_source     TEXT,
-                created_at       TEXT    NOT NULL
-            );
+                CREATE TABLE IF NOT EXISTS videos (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic_hash       TEXT    NOT NULL,
+                    title            TEXT,
+                    description      TEXT,
+                    keywords         TEXT,
+                    hashtags         TEXT,
+                    local_path       TEXT,
+                    thumbnail_path   TEXT,
+                    youtube_video_id TEXT,
+                    platform         TEXT    DEFAULT 'youtube',
+                    upload_status    TEXT    DEFAULT 'pending',
+                    duration         REAL    DEFAULT 0,
+                    script_hash      TEXT,
+                    trend_source     TEXT,
+                    created_at       TEXT    NOT NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS failures (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                stage      TEXT    NOT NULL,
-                message    TEXT    NOT NULL,
-                details    TEXT,
-                created_at TEXT    NOT NULL
-            );
+                CREATE TABLE IF NOT EXISTS failures (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stage      TEXT    NOT NULL,
+                    message    TEXT    NOT NULL,
+                    details    TEXT,
+                    created_at TEXT    NOT NULL
+                );
 
-            CREATE INDEX IF NOT EXISTS idx_topics_hash
-                ON topics (topic_hash);
+                CREATE INDEX IF NOT EXISTS idx_topics_hash
+                    ON topics (topic_hash);
 
-            CREATE INDEX IF NOT EXISTS idx_videos_topic_hash
-                ON videos (topic_hash);
+                CREATE INDEX IF NOT EXISTS idx_videos_topic_hash
+                    ON videos (topic_hash);
 
-            CREATE INDEX IF NOT EXISTS idx_videos_created_at
-                ON videos (created_at);
-            """
-        )
+                CREATE INDEX IF NOT EXISTS idx_videos_created_at
+                    ON videos (created_at);
+                """
+            )
+    finally:
+        conn.close()
     log.debug("Database initialised at %s", DATABASE_PATH)
     _migrate_database()
 
@@ -121,14 +125,18 @@ def _migrate_database() -> None:
         ("topics",   "ALTER TABLE topics ADD COLUMN style TEXT"),
     ]
 
-    with get_connection() as conn:
-        for table, sql in migrations:
-            try:
-                conn.execute(sql)
-                log.debug("Migration applied: %s", sql)
-            except Exception:
-                # Column already exists — safe to ignore
-                pass
+    conn = get_connection()
+    try:
+        with conn:
+            for table, sql in migrations:
+                try:
+                    conn.execute(sql)
+                    log.debug("Migration applied: %s", sql)
+                except Exception:
+                    # Column already exists — safe to ignore
+                    pass
+    finally:
+        conn.close()
 
     log.debug("Schema migration complete")
 
@@ -156,11 +164,14 @@ def script_hash(script: str) -> str:
 def topic_exists(topic: str) -> bool:
     """Return True if this topic (or a near-duplicate) has been used before."""
     h = topic_hash(topic)
-    with get_connection() as conn:
+    conn = get_connection()
+    try:
         row = conn.execute(
             "SELECT 1 FROM topics WHERE topic_hash = ?",
             (h,),
         ).fetchone()
+    finally:
+        conn.close()
     return row is not None
 
 
@@ -176,25 +187,32 @@ def save_topic(
     Returns the topic hash.
     """
     h = topic_hash(topic)
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO topics
-              (topic_hash, topic, style, source_type, source_urls, score, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (h, topic, style, source_type, source_urls, score, _now_utc()),
-        )
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO topics
+                  (topic_hash, topic, style, source_type, source_urls, score, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (h, topic, style, source_type, source_urls, score, _now_utc()),
+            )
+    finally:
+        conn.close()
     return h
 
 
 def get_recent_topics(n: int = 50) -> list[str]:
     """Return the N most recently used topic strings."""
-    with get_connection() as conn:
+    conn = get_connection()
+    try:
         rows = conn.execute(
             "SELECT topic FROM topics ORDER BY created_at DESC LIMIT ?",
             (n,),
         ).fetchall()
+    finally:
+        conn.close()
     return [row["topic"] for row in rows]
 
 
@@ -217,31 +235,35 @@ def mark_video_uploaded(
     trend_source: str = "",
 ) -> None:
     """Record a successfully uploaded video in the database."""
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO videos
-              (topic_hash, title, description, keywords, hashtags,
-               local_path, thumbnail_path, youtube_video_id, platform,
-               upload_status, duration, script_hash, trend_source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', ?, ?, ?, ?)
-            """,
-            (
-                topic_hash_value,
-                title,
-                description,
-                json.dumps(keywords, ensure_ascii=False),
-                json.dumps(hashtags, ensure_ascii=False),
-                local_path,
-                thumbnail_path,
-                youtube_video_id,
-                platform,
-                duration,
-                script_hash_value,
-                trend_source,
-                _now_utc(),
-            ),
-        )
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO videos
+                  (topic_hash, title, description, keywords, hashtags,
+                   local_path, thumbnail_path, youtube_video_id, platform,
+                   upload_status, duration, script_hash, trend_source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', ?, ?, ?, ?)
+                """,
+                (
+                    topic_hash_value,
+                    title,
+                    description,
+                    json.dumps(keywords, ensure_ascii=False),
+                    json.dumps(hashtags, ensure_ascii=False),
+                    local_path,
+                    thumbnail_path,
+                    youtube_video_id,
+                    platform,
+                    duration,
+                    script_hash_value,
+                    trend_source,
+                    _now_utc(),
+                ),
+            )
+    finally:
+        conn.close()
     log.info("Video record saved: youtube_id=%s", youtube_video_id)
 
 
@@ -256,12 +278,16 @@ def record_failure(
     details: str = "",
 ) -> None:
     """Log a pipeline failure to the database."""
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO failures (stage, topic, message, details, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (stage, topic, message, details, _now_utc()),
-        )
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO failures (stage, topic, message, details, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (stage, topic, message, details, _now_utc()),
+            )
+    finally:
+        conn.close()
     log.debug("Failure recorded: stage=%s topic=%s", stage, topic)

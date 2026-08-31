@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../api/client'
+import ThemeToggleFloating from '../components/ThemeToggleFloating'
 
 export default function ForgotPassword() {
   const [email, setEmail]     = useState('')
@@ -24,6 +25,7 @@ export default function ForgotPassword() {
 
   return (
     <div className="auth-page">
+      <ThemeToggleFloating />
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">🎬</div>
