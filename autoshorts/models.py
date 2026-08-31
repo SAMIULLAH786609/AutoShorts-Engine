@@ -25,6 +25,7 @@ class TopicIdea:
     trend_reason: str
     original_angle: str
     score: float = 0.0
+    hook: str = ""
 
 
 @dataclass
