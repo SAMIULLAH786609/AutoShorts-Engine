@@ -51,12 +51,12 @@ from autoshorts.services.youtube_upload import upload_video
 
 log = get_logger("long_video_pipeline")
 
-LONG_VIDEO_CLIPS_NEEDED = 10
+LONG_VIDEO_CLIPS_NEEDED = 4
 PEXELS_SEARCH_URL  = "https://api.pexels.com/videos/search"
 PIXABAY_SEARCH_URL = "https://pixabay.com/api/videos/"
 
 
-def _collect_landscape_clips(keywords: list[str], job_id: str, count: int = 10) -> list[Path]:
+def _collect_landscape_clips(keywords: list[str], job_id: str, count: int = 4) -> list[Path]:
     """Collect landscape (16:9) stock video clips from Pexels/Pixabay."""
     clips: list[Path] = []
     job_dir = DOWNLOAD_DIR / job_id

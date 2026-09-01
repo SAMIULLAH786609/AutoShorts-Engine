@@ -484,13 +484,13 @@ def run_long_pipeline_for_user(
             style       = plan.style,
         )
 
-        # Step 6: 10 Landscape Clips
+        # Step 6: 4 Landscape Clips
         check_cancelled()
-        clips = _collect_landscape_clips(plan.keywords, job_id=f"{user.id}_{timestamp}", count=10)
+        clips = _collect_landscape_clips(plan.keywords, job_id=f"{user.id}_{timestamp}", count=4)
         if not clips:
             raise RuntimeError("No landscape stock clips downloaded")
 
-        # Step 7: Render 16:9 1080p
+        # Step 7: Render 16:9 720p (low-memory stream)
         check_cancelled()
         video_path = output_dir / f"{safe_name}_{timestamp}.mp4"
         render_long_video(
