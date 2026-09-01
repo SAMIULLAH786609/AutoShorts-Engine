@@ -25,13 +25,12 @@ from autoshorts.services.logging_setup import get_logger
 
 log = get_logger("gemini_service")
 
-# Confirmed available models on this API key (verified via ModelService.ListModels).
-# Ordered lightest → heaviest to preserve quota.
+# Confirmed available and working models on this API key.
+# Ordered lightest → heaviest to preserve quota and avoid 503 high demand.
 _FALLBACK_MODELS = [
-    "gemini-flash-lite-latest",   # lightest & fastest — confirmed available
-    "gemini-2.5-flash-lite",      # confirmed available
-    "gemini-flash-latest",        # standard flash — confirmed available
-    "gemini-2.5-flash",           # best quality — confirmed available
+    "gemini-flash-lite-latest",   # fastest & lightweight
+    "gemini-3.5-flash-lite",      # next-gen fast flash
+    "gemini-3.5-flash",           # high quality flash
 ]
 
 _TEMPORARY_ERROR_TERMS = (
