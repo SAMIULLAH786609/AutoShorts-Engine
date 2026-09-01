@@ -121,6 +121,12 @@ def trigger_job(
         )
 
     # Check if a job is already running or about to start
+    if is_pipeline_running():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A video is currently generating. Please wait for it to finish.",
+        )
+
     running = (
         db.query(VideoJob)
         .filter(
@@ -260,15 +266,40 @@ MAX_AUTO_RETRIES = 3          # maximum retry attempts per job chain
 RETRY_DELAY_SEC  = 90         # wait 90 seconds before retrying (let server breathe)
 
 
+import threading
+
+# Global concurrency lock — strictly ensures only ONE video can generate/upload at a time
+_GLOBAL_PIPELINE_LOCK = threading.Lock()
+
+def is_pipeline_running() -> bool:
+    """Return True if a video pipeline job is currently executing."""
+    return _GLOBAL_PIPELINE_LOCK.locked()
+
+
 def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
     """
     Background function that runs the full pipeline for one user.
-    Updates job status in the database throughout.
-    On failure (including OOM), automatically retries up to MAX_AUTO_RETRIES times.
+    Uses a strict mutex lock so ONLY ONE video executes across the entire system.
     """
     import gc
     import time
     from backend.database import SessionLocal
+
+    # Acquire lock non-blockingly so simultaneous jobs never run together
+    acquired = _GLOBAL_PIPELINE_LOCK.acquire(blocking=False)
+    if not acquired:
+        _db_tmp = SessionLocal()
+        try:
+            j = _db_tmp.query(VideoJob).filter(VideoJob.id == job_id).first()
+            if j:
+                j.status = "failed"
+                j.error_message = "[Concurrency Lock] Another video is already generating. Skipped duplicate."
+                j.completed_at = datetime.now(timezone.utc)
+                _db_tmp.commit()
+        finally:
+            _db_tmp.close()
+        return
+
     db = SessionLocal()
 
     try:
@@ -364,5 +395,12 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
 
     finally:
         if db is not None:
-            db.close()
+            try:
+                db.close()
+            except Exception:
+                pass
         gc.collect()
+        try:
+            _GLOBAL_PIPELINE_LOCK.release()
+        except RuntimeError:
+            pass

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import hashlib
+import logging
 import sys
 import os
 import time
@@ -22,6 +23,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from backend.models import User, UserSchedule, UsedTopic, VideoJob, YouTubeChannel
+
+log = logging.getLogger("autoshorts.pipeline_runner")
 
 # Ensure project root is on path so we can import from autoshorts/
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

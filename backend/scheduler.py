@@ -127,9 +127,15 @@ def _check_and_fire_scheduled_jobs() -> None:
     Called every minute. Does two things:
     1. CRASH RECOVERY — auto-recovers stuck jobs.
     2. SCHEDULED SHORTS — evenly spaced between start_time and end_time.
+    Enforces STRICT SINGLE-JOB concurrency: only 1 video runs across the system.
     """
     from backend.database import SessionLocal
     from backend.models import User, UserSchedule, YouTubeChannel, VideoJob
+    from backend.routers.jobs import is_pipeline_running
+
+    if is_pipeline_running():
+        log.info("A video is currently generating (lock held). Skipping scheduler tick.")
+        return
 
     db = SessionLocal()
 
@@ -138,6 +144,19 @@ def _check_and_fire_scheduled_jobs() -> None:
         now_time     = now_utc.strftime("%H:%M")
         today_start  = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         stuck_cutoff = now_utc - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+
+        # If a non-stuck job is already active in the DB, do NOT start any new job!
+        active_in_db = (
+            db.query(VideoJob)
+            .filter(
+                VideoJob.status.in_(["pending", "running"]),
+                VideoJob.created_at > stuck_cutoff,
+            )
+            .first()
+        )
+        if active_in_db:
+            log.info("Job %s is currently active in DB. Skipping new triggers.", active_in_db.id[:8])
+            return
 
         # ── PART 1: CRASH RECOVERY ────────────────────────────────────────────
         stuck_jobs = (
