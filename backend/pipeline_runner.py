@@ -193,7 +193,7 @@ def run_pipeline_for_user(
         # ── Step 5: Generate voice ────────────────────────────────
         check_cancelled()
         import re
-        safe_name  = re.sub(r'[<>:"/\\|?*\s]', "_", plan.title)[:50]
+        safe_name  = re.sub(r'[^a-zA-Z0-9_\-]', '_', plan.title)[:40] or "short_video"
         audio_path = user_dir / f"{safe_name}_voice.mp3"
 
         generate_voice(

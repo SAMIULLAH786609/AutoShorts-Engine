@@ -200,13 +200,14 @@ def _build_subtitle_filter(
         "…": "...",
     })
 
-    # Escape text for ffmpeg (colons, apostrophes, backslashes)
+    # Escape text for ffmpeg (colons, apostrophes, backslashes, percent)
     def escape(text: str) -> str:
         text = text.translate(_PUNCT_MAP)
         text = text.encode("ascii", "ignore").decode("ascii")
+        text = text.replace("%", " PERCENT")
+        text = text.replace("$", " USD ")
         text = text.replace("\\", "\\\\")
         text = text.replace(":", r"\:")
-        text = text.replace("%", r"\%")
         # Escape a literal single quote inside the single-quoted drawtext
         # value using ffmpeg's close-quote/escape/reopen-quote trick.
         text = text.replace("'", "'\\''")
@@ -378,12 +379,13 @@ def render_short(
         "-map", audio_map,
         "-t", f"{duration:.3f}",
         "-c:v", "libx264",
-        "-preset", "medium",    # Better quality than ultrafast — YouTube re-encodes anyway
-        "-crf", "23",           # Higher quality (23 = good, 28 = noticeably blurry)
+        "-preset", "ultrafast", # Low-memory encoding for 512MB RAM environments
+        "-crf", "24",
+        "-threads", "2",
         "-r", str(VIDEO_FPS),
         "-pix_fmt", "yuv420p",  # Required for max device compatibility
         "-c:a", "aac",
-        "-b:a", "192k",         # Better audio quality (192k vs 128k)
+        "-b:a", "128k",
         "-movflags", "+faststart",
         str(output_path),
     ]
