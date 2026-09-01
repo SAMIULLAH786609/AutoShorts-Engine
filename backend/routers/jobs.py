@@ -134,13 +134,11 @@ def trigger_job(
         )
 
     # Create job record
-    v_type = body.video_type if body.video_type in ("short", "long") else "short"
     job = VideoJob(
         user_id    = current_user.id,
         channel_id = channel.id,
         status     = "pending",
         trigger    = "manual",
-        video_type = v_type,
     )
     db.add(job)
     db.commit()
@@ -287,13 +285,9 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
         # Force garbage collection before heavy pipeline work
         gc.collect()
 
-        # Run the pipeline (Shorts vs Long-form Hindi 16:9)
-        if getattr(job, "video_type", "short") == "long":
-            from backend.pipeline_runner import run_long_pipeline_for_user
-            result = run_long_pipeline_for_user(user=user, channel=channel, db=db, job_id=job.id)
-        else:
-            from backend.pipeline_runner import run_pipeline_for_user
-            result = run_pipeline_for_user(user=user, channel=channel, db=db, job_id=job.id)
+        # Run the pipeline
+        from backend.pipeline_runner import run_pipeline_for_user
+        result = run_pipeline_for_user(user=user, channel=channel, db=db, job_id=job.id)
 
         # Update job with results
         job.status           = "complete"
@@ -339,13 +333,11 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
 
             db2 = SessionLocal()
             try:
-                v_type = getattr(job, "video_type", "short") if job else "short"
                 new_job = VideoJob(
                     user_id     = user_id,
                     channel_id  = channel_id,
                     status      = "pending",
                     trigger     = "retry",
-                    video_type  = v_type,
                     retry_count = retry_count,
                 )
                 db2.add(new_job)

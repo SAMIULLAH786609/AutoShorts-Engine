@@ -65,18 +65,17 @@ export default function Dashboard() {
     return () => clearInterval(id)
   }, [stats, fetchStats])
 
-  const triggerJob = async (videoType = 'short') => {
+  const triggerJob = async () => {
     if (!stats?.channel_connected) {
       navigate('/settings')
       return
     }
     setError('')
     setSuccess('')
-    setTriggering(videoType)
+    setTriggering(true)
     try {
-      await api.post('/jobs/trigger', { video_type: videoType })
-      const label = videoType === 'long' ? 'Full Hindi 1080p Video' : 'Short'
-      setSuccess(`🎬 ${label} generation started! Refresh in a few minutes to see progress.`)
+      await api.post('/jobs/trigger', {})
+      setSuccess('🎬 Video generation started! Refresh in a few minutes to see progress.')
       await fetchStats()
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to trigger video generation')
@@ -170,42 +169,22 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Schedule info + trigger buttons */}
-        <div className="card" style={{marginBottom:24, display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, flexWrap:'wrap'}}>
+        {/* Schedule info + trigger */}
+        <div className="card" style={{marginBottom:24, display:'flex', alignItems:'center', justifyContent:'space-between', gap:16}}>
           <div>
-            <div style={{fontWeight:600, marginBottom:4}}>🗓️ Automated Schedule</div>
+            <div style={{fontWeight:600, marginBottom:4}}>🗓️ Next scheduled video</div>
             <div style={{fontSize:14, color:'var(--text-secondary)'}}>
-              {stats?.next_scheduled ? (
-                <>Next Short: <strong>{stats.next_scheduled}</strong></>
-              ) : 'No active schedule — configure in Schedule page'}
+              {stats?.next_scheduled ?? 'No active schedule — enable in Schedule page'}
             </div>
           </div>
-          <div style={{display:'flex', gap:10, alignItems:'center'}}>
-            <button
-              className="btn btn-primary"
-              onClick={() => triggerJob('short')}
-              disabled={!!triggering}
-              id="trigger-short-btn"
-              title="Generate a 30-second YouTube Short"
-            >
-              {triggering === 'short' ? <><span className="spinner" />Creating Short…</> : '⚡ Generate Short'}
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => triggerJob('long')}
-              disabled={!!triggering}
-              id="trigger-long-btn"
-              style={{
-                background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)',
-                color: 'white',
-                border: 'none',
-                boxShadow: '0 2px 8px rgba(124,58,237,0.3)',
-              }}
-              title="Generate a 5-8 min 16:9 1080p Full Hindi Video"
-            >
-              {triggering === 'long' ? <><span className="spinner" />Creating Full Video…</> : '🎬 Generate Full Video (Hindi)'}
-            </button>
-          </div>
+          <button
+            className="btn btn-primary"
+            onClick={triggerJob}
+            disabled={triggering}
+            id="trigger-video-btn"
+          >
+            {triggering ? <><span className="spinner" />Starting…</> : '▶ Generate Video Now'}
+          </button>
         </div>
 
         {/* Recent jobs */}
@@ -219,14 +198,13 @@ export default function Dashboard() {
             <div className="empty-state">
               <div className="empty-state-icon">🎬</div>
               <h3>No videos yet</h3>
-              <p>Click "Generate Short" or "Generate Full Video" to create your first video</p>
+              <p>Click "Generate Video Now" to create your first AI-powered YouTube Short</p>
             </div>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>Title</th>
-                  <th>Format</th>
                   <th>Status</th>
                   <th>Trigger</th>
                   <th>YouTube</th>
@@ -245,17 +223,6 @@ export default function Dashboard() {
                         {job.title || job.topic || '—'}
                       </div>
                       {job.style && <div style={{fontSize:12,color:'var(--text-secondary)',marginTop:2}}>{job.style}</div>}
-                    </td>
-                    <td>
-                      {job.video_type === 'long' ? (
-                        <span className="badge" style={{background:'rgba(124,58,237,0.15)', color:'var(--brand-1)', fontWeight:600, border:'1px solid rgba(124,58,237,0.3)'}}>
-                          🎥 16:9 Full
-                        </span>
-                      ) : (
-                        <span className="badge" style={{background:'rgba(59,130,246,0.15)', color:'#2563eb', fontWeight:600, border:'1px solid rgba(59,130,246,0.3)'}}>
-                          📱 9:16 Short
-                        </span>
-                      )}
                     </td>
                     <td>{STATUS_BADGE[job.status] ?? <span className="badge">{job.status}</span>}</td>
                     <td><span style={{fontSize:12,color:'var(--text-secondary)',textTransform:'capitalize'}}>{job.trigger}</span></td>
