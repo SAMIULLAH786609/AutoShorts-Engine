@@ -275,9 +275,15 @@ def run_pipeline_for_user(
         except Exception:
             pass
 
-        # ── Step 12: Cleanup output + thumbnail dirs (success path only) ────
-        # Cleaned AFTER upload succeeds so video is never lost on failure.
+        # ── Step 12: Complete disk cleanup (delete all data after upload) ──
+        # All video, audio, stock clips, and thumbnails are deleted from disk
         import shutil as _shutil_s
+        for p in (video_path, thumb_path, audio_path):
+            try:
+                if p and Path(p).exists():
+                    Path(p).unlink(missing_ok=True)
+            except Exception:
+                pass
         try:
             _shutil_s.rmtree(output_dir, ignore_errors=True)
         except Exception:
@@ -286,6 +292,13 @@ def run_pipeline_for_user(
             _shutil_s.rmtree(thumb_dir, ignore_errors=True)
         except Exception:
             pass
+        try:
+            _shutil_s.rmtree(user_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+        log.info("Cleaned all temporary video/audio data from disk for job %s", job_id or "manual")
+        gc.collect()
 
         return {
             "topic":            topic,
@@ -298,16 +311,12 @@ def run_pipeline_for_user(
         }
 
     finally:
-        # Bug 2 fixed: Only clean up TEMPORARY download files in finally.
-        # output_dir (rendered video) and thumb_dir are cleaned up AFTER successful
-        # Cloudinary + YouTube upload (inside the try block above).
-        # If we delete output_dir here unconditionally, a failure at step 9/10
-        # would destroy the video BEFORE it can be uploaded — permanent data loss.
         import shutil as _shutil
         try:
             _shutil.rmtree(user_dir, ignore_errors=True)
         except Exception:
             pass
+        gc.collect()
 
 
 def _upload_to_youtube(
