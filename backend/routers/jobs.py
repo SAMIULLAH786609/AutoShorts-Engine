@@ -294,10 +294,11 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
         try:
             j = _db_tmp.query(VideoJob).filter(VideoJob.id == job_id).first()
             if j:
-                j.status = "failed"
-                j.error_message = "[Concurrency Lock] Another video is already generating. Skipped duplicate."
-                j.completed_at = datetime.now(timezone.utc)
+                # Silently delete duplicate job record so history stays clean without false red error rows
+                _db_tmp.delete(j)
                 _db_tmp.commit()
+        except Exception:
+            pass
         finally:
             _db_tmp.close()
         return
