@@ -11,6 +11,7 @@ Endpoints:
 from __future__ import annotations
 
 import gc
+import threading
 import time
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -24,6 +25,22 @@ from backend.models import User, VideoJob, YouTubeChannel
 from backend.schemas import JobResponse, TriggerJobRequest
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+# ── Pipeline concurrency control ──────────────────────────────
+# Strict global mutex — only ONE video can generate at a time system-wide.
+_GLOBAL_PIPELINE_LOCK = threading.Lock()
+
+MAX_AUTO_RETRIES = 3      # Maximum automatic retry attempts per failed job
+RETRY_DELAY_SEC  = 30     # Seconds to wait before each auto-retry
+
+
+def is_pipeline_running() -> bool:
+    """Return True if a video pipeline is currently executing."""
+    locked = _GLOBAL_PIPELINE_LOCK.acquire(blocking=False)
+    if locked:
+        _GLOBAL_PIPELINE_LOCK.release()
+        return False
+    return True
 
 
 # ── List jobs ─────────────────────────────────────────────────
@@ -260,21 +277,6 @@ def delete_job(
     db.commit()
 
 
-# ── Background task ───────────────────────────────────────────
-
-MAX_AUTO_RETRIES = 3          # maximum retry attempts per job chain
-RETRY_DELAY_SEC  = 90         # wait 90 seconds before retrying (let server breathe)
-
-
-import threading
-
-# Global concurrency lock — strictly ensures only ONE video can generate/upload at a time
-_GLOBAL_PIPELINE_LOCK = threading.Lock()
-
-def is_pipeline_running() -> bool:
-    """Return True if a video pipeline job is currently executing."""
-    return _GLOBAL_PIPELINE_LOCK.locked()
-
 
 def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
     """
@@ -301,6 +303,9 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
         return
 
     db = SessionLocal()
+    # Track whether the lock was released early (before retry sleep).
+    # This prevents a double-release error in the finally block.
+    _lock_released = False
 
     try:
         job  = db.query(VideoJob).filter(VideoJob.id == job_id).first()
@@ -362,6 +367,16 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
             db.close()
             db = None
             gc.collect()
+
+            # CRITICAL FIX: Release the lock BEFORE sleeping so the retry
+            # thread can successfully acquire it. Without this, the retry thread
+            # sees the lock still held and instantly fails with "[Concurrency Lock]".
+            try:
+                _GLOBAL_PIPELINE_LOCK.release()
+                _lock_released = True
+            except RuntimeError:
+                _lock_released = True  # already released, still safe
+
             time.sleep(RETRY_DELAY_SEC)
 
             db2 = SessionLocal()
@@ -400,7 +415,11 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
             except Exception:
                 pass
         gc.collect()
-        try:
-            _GLOBAL_PIPELINE_LOCK.release()
-        except RuntimeError:
-            pass
+        # Only release the lock if we haven't already released it early
+        # (i.e. before the retry sleep). Prevents RuntimeError on double-release.
+        if not _lock_released:
+            try:
+                _GLOBAL_PIPELINE_LOCK.release()
+            except RuntimeError:
+                pass
+

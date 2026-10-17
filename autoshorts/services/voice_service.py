@@ -121,14 +121,33 @@ def generate_voice(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    word_timings = asyncio.run(
-        _synthesize(
-            text=text,
-            output_path=output_path,
-            voice=selected_voice,
-            style=style,
+    # Retry up to 3 times — Microsoft Edge TTS occasionally returns 403
+    # on cloud servers (rate-limit / IP block). A short delay + retry resolves it.
+    import time as _time
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            word_timings = asyncio.run(
+                _synthesize(
+                    text=text,
+                    output_path=output_path,
+                    voice=selected_voice,
+                    style=style,
+                )
+            )
+            break   # success — exit retry loop
+        except Exception as exc:
+            last_exc = exc
+            log.warning(
+                "TTS attempt %d/3 failed for voice %s: %s",
+                attempt, selected_voice, exc,
+            )
+            if attempt < 3:
+                _time.sleep(2 * attempt)   # 2s, 4s back-off
+    else:
+        raise RuntimeError(
+            f"Voice generation failed after 3 attempts: {last_exc}"
         )
-    )
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError(f"Voice generation failed — output is missing: {output_path}")

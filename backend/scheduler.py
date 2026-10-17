@@ -84,6 +84,24 @@ def start_scheduler() -> None:
         max_instances    = 1,
     )
 
+    # Every day at UTC midnight: delete uploaded videos with 0 views after 2 days
+    _scheduler.add_job(
+        _auto_delete_zero_view_videos,
+        trigger          = CronTrigger(hour=0, minute=0),
+        id               = "auto_delete_zero_views",
+        replace_existing = True,
+        max_instances    = 1,
+    )
+
+    # Every hour: pull fresh views/likes/comments for all uploaded Shorts from YouTube API
+    _scheduler.add_job(
+        _refresh_all_shorts_stats,
+        trigger          = CronTrigger(minute=0),   # top of every hour
+        id               = "refresh_shorts_stats",
+        replace_existing = True,
+        max_instances    = 1,
+    )
+
     _scheduler.start()
     log.info("APScheduler started — monitoring schedules + auto-recovering crashed jobs every minute")
 
@@ -277,3 +295,221 @@ def _check_and_fire_scheduled_jobs() -> None:
 
     finally:
         db.close()
+
+
+# ── Hourly Auto-Refresh: Shorts Views/Likes/Comments ──────────────────────────
+
+# Only refresh stats for videos uploaded within this many days
+STATS_REFRESH_WINDOW_DAYS = 30
+
+# Minimum gap between two refreshes for the same video (minutes)
+STATS_REFRESH_MIN_GAP_MINUTES = 50
+
+
+def _refresh_all_shorts_stats() -> None:
+    """
+    Hourly job (every :00).
+
+    For all completed VideoJobs with a youtube_video_id uploaded in the last
+    STATS_REFRESH_WINDOW_DAYS days, fetch the latest views/likes/comments from
+    the YouTube Data API and save them to the DB.
+
+    Skips videos whose stats were refreshed less than
+    STATS_REFRESH_MIN_GAP_MINUTES minutes ago to avoid hammering the API.
+    """
+    from backend.database import SessionLocal
+    from backend.models import VideoJob, YouTubeChannel
+    from backend.youtube_stats import fetch_video_stats
+
+    log.info("STATS-REFRESH: Starting hourly Shorts stats refresh...")
+
+    db = SessionLocal()
+    updated = 0
+    skipped = 0
+    errors  = 0
+
+    try:
+        window_cutoff  = datetime.now(timezone.utc) - timedelta(days=STATS_REFRESH_WINDOW_DAYS)
+        stale_cutoff   = datetime.now(timezone.utc) - timedelta(minutes=STATS_REFRESH_MIN_GAP_MINUTES)
+
+        # Fetch all uploaded jobs within the refresh window
+        jobs = (
+            db.query(VideoJob)
+            .filter(
+                VideoJob.status           == "complete",
+                VideoJob.youtube_video_id != None,
+                VideoJob.youtube_video_id != "",
+                VideoJob.completed_at     >= window_cutoff,
+            )
+            .all()
+        )
+
+        log.info("STATS-REFRESH: %d uploaded Shorts in window.", len(jobs))
+
+        for job in jobs:
+            # Skip if stats are fresh enough
+            if job.yt_stats_updated and job.yt_stats_updated > stale_cutoff:
+                skipped += 1
+                continue
+
+            channel = (
+                db.query(YouTubeChannel)
+                .filter(YouTubeChannel.id == job.channel_id)
+                .first()
+            )
+            if not channel:
+                skipped += 1
+                continue
+
+            try:
+                stats = fetch_video_stats(channel=channel, video_id=job.youtube_video_id)
+                job.yt_views         = stats.get("views",    0)
+                job.yt_likes         = stats.get("likes",    0)
+                job.yt_comments      = stats.get("comments", 0)
+                job.yt_stats_updated = datetime.now(timezone.utc)
+                db.commit()
+                updated += 1
+                log.info(
+                    "STATS-REFRESH: video %s → views=%d likes=%d comments=%d",
+                    job.youtube_video_id,
+                    job.yt_views, job.yt_likes, job.yt_comments,
+                )
+            except Exception as exc:
+                errors += 1
+                log.warning(
+                    "STATS-REFRESH: Failed to refresh stats for video %s (job %s): %s",
+                    job.youtube_video_id, job.id[:8], exc,
+                )
+
+    except Exception as exc:
+        log.exception("STATS-REFRESH: Unexpected error: %s", exc)
+
+    finally:
+        db.close()
+
+    log.info(
+        "STATS-REFRESH: Done — updated=%d, skipped=%d, errors=%d.",
+        updated, skipped, errors,
+    )
+
+
+# ── Auto-Delete Zero-View Videos ──────────────────────────────────────────────
+
+# Videos must be at least this many hours old before we check them
+AUTO_DELETE_AFTER_HOURS = 48   # 2 days
+
+# Delete if views are strictly less than this number (0 = only delete with zero views)
+AUTO_DELETE_VIEW_THRESHOLD = 0
+
+
+def _auto_delete_zero_view_videos() -> None:
+    """
+    Daily job (UTC 00:00).
+
+    For every completed video job where:
+      - youtube_video_id is set  (it was uploaded to YouTube)
+      - completed_at is >= 48 hours ago
+      - fresh view count == 0
+
+    → Delete the video from YouTube
+    → Delete the VideoJob record from DB
+    """
+    from backend.database import SessionLocal
+    from backend.models import VideoJob, YouTubeChannel
+    from backend.youtube_stats import fetch_video_stats, delete_youtube_video
+
+    log.info("AUTO-DELETE: Starting daily zero-view video cleanup...")
+
+    db = SessionLocal()
+    deleted_count = 0
+    skipped_count = 0
+    error_count   = 0
+
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_DELETE_AFTER_HOURS)
+
+        # Find candidates: completed uploads older than 48 hours
+        candidates = (
+            db.query(VideoJob)
+            .filter(
+                VideoJob.status           == "complete",
+                VideoJob.youtube_video_id != None,
+                VideoJob.youtube_video_id != "",
+                VideoJob.completed_at     <= cutoff,
+            )
+            .all()
+        )
+
+        log.info("AUTO-DELETE: Found %d candidate video(s) to check.", len(candidates))
+
+        for job in candidates:
+            video_id = job.youtube_video_id
+
+            # Get the channel to fetch stats / delete
+            channel = (
+                db.query(YouTubeChannel)
+                .filter(YouTubeChannel.id == job.channel_id)
+                .first()
+            )
+            if not channel:
+                log.warning(
+                    "AUTO-DELETE: Skipping job %s (video %s) — channel not found.",
+                    job.id[:8], video_id,
+                )
+                skipped_count += 1
+                continue
+
+            # --- Fresh stats check ---
+            try:
+                stats = fetch_video_stats(channel=channel, video_id=video_id)
+                views = stats.get("views", 0)
+            except Exception as exc:
+                log.warning(
+                    "AUTO-DELETE: Could not fetch stats for video %s (job %s): %s. Skipping.",
+                    video_id, job.id[:8], exc,
+                )
+                skipped_count += 1
+                continue
+
+            if views > AUTO_DELETE_VIEW_THRESHOLD:
+                log.info(
+                    "AUTO-DELETE: Keeping video %s (job %s) — has %d view(s).",
+                    video_id, job.id[:8], views,
+                )
+                skipped_count += 1
+                continue
+
+            # --- Views == 0: delete from YouTube then DB ---
+            log.info(
+                "AUTO-DELETE: Video %s (job %s) has 0 views after %dh — deleting...",
+                video_id, job.id[:8], AUTO_DELETE_AFTER_HOURS,
+            )
+
+            yt_deleted = delete_youtube_video(channel=channel, video_id=video_id)
+
+            if yt_deleted:
+                db.delete(job)
+                db.commit()
+                deleted_count += 1
+                log.info(
+                    "AUTO-DELETE: ✓ Deleted YouTube video %s and removed DB record (job %s).",
+                    video_id, job.id[:8],
+                )
+            else:
+                error_count += 1
+                log.error(
+                    "AUTO-DELETE: ✗ YouTube deletion failed for video %s (job %s). DB record kept.",
+                    video_id, job.id[:8],
+                )
+
+    except Exception as exc:
+        log.exception("AUTO-DELETE: Unexpected error during cleanup: %s", exc)
+
+    finally:
+        db.close()
+
+    log.info(
+        "AUTO-DELETE: Done — deleted=%d, skipped=%d, errors=%d.",
+        deleted_count, skipped_count, error_count,
+    )
+

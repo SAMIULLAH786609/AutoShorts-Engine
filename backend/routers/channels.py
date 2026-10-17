@@ -36,8 +36,9 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 YOUTUBE_API_URL  = "https://www.googleapis.com/youtube/v3/channels"
 
 SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube",          # Full write access — required for videos.delete
+    "https://www.googleapis.com/auth/youtube.upload",   # Upload videos
+    "https://www.googleapis.com/auth/youtube.readonly", # Read channel info / stats
     "openid",
     "email",
     "profile",

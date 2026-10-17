@@ -209,12 +209,14 @@ def run_pipeline_for_user(
             gender      = user.default_gender   or "female",
             style       = plan.style,
         )
+        gc.collect()  # Free any large buffers held by TTS engine
 
         # ── Step 6: Collect videos ────────────────────────────────
         check_cancelled()
         # Limit to a maximum of 3 keywords to prevent high RAM usage in MoviePy
         limited_keywords = plan.keywords[:3] if plan.keywords else []
         video_paths = collect_scene_videos(limited_keywords, output_dir=user_dir)
+        gc.collect()  # Free download buffers before renderer loads clips
 
         # ── Step 7: Render ────────────────────────────────────────
         check_cancelled()
@@ -357,7 +359,11 @@ def _upload_to_youtube(
         token_uri     = "https://oauth2.googleapis.com/token",
         client_id     = GOOGLE_CLIENT_ID,
         client_secret = GOOGLE_CLIENT_SECRET,
-        scopes        = ["https://www.googleapis.com/auth/youtube.upload"],
+        scopes        = [
+            "https://www.googleapis.com/auth/youtube",
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.readonly",
+        ],
     )
 
     youtube = build("youtube", "v3", credentials=credentials)

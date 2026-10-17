@@ -25,12 +25,13 @@ from autoshorts.services.logging_setup import get_logger
 
 log = get_logger("gemini_service")
 
-# Confirmed available and working models on this API key.
-# Ordered lightest → heaviest to preserve quota and avoid 503 high demand.
+# Real, verified Gemini API model IDs — ordered lightest → heaviest.
+# Primary model is read from GEMINI_MODEL in .env (gemini-2.0-flash by default).
+# Fallbacks activate automatically if the primary is rate-limited or unavailable.
 _FALLBACK_MODELS = [
-    "gemini-flash-lite-latest",   # fastest & lightweight
-    "gemini-3.5-flash-lite",      # next-gen fast flash
-    "gemini-3.5-flash",           # high quality flash
+    GEMINI_MODEL,               # primary from .env (default: gemini-2.0-flash)
+    "gemini-2.0-flash-lite",   # lightest & fastest fallback
+    "gemini-1.5-flash",        # proven stable fallback
 ]
 
 _TEMPORARY_ERROR_TERMS = (
@@ -168,32 +169,41 @@ pricing/spending traps, lifestyle inflation, the psychology behind scams and con
 EDUCATIONAL ONLY — never give stock picks, crypto calls, "invest in X", or any
 personalised financial advice.
 
-=== CURRENT TRENDS (OPTIONAL FUEL — use only if a trend truly fits the niche) ===
+=== CURRENT MONEY-RELEVANT TRENDS (OPTIONAL FUEL) ===
 {trends_text}
 {avoid_section}
 
 === YOUR TASK ===
 Generate exactly {count} short-video ideas. Each idea MUST:
 1. Sit 100% inside the money / wealth-psychology niche above.
-2. Deliver ONE specific, surprising, verifiable insight (not vague "be disciplined" fluff).
-3. Open a curiosity gap that makes a scrolling viewer stop within 1 second.
+2. Deliver ONE specific, SURPRISING, verifiable insight with a REAL number or statistic.
+3. Open a curiosity gap that makes a scrolling viewer STOP within 1 second.
 4. Fit a tight 25–35 second Short.
 5. Be clearly different from each other AND from the already-used list.
-6. Use a trend ONLY when it genuinely intersects the niche (a billionaire story, a
-   viral scam, an inflation/price story). Otherwise pick a strong EVERGREEN angle
-   and set trend_ref to "" — evergreen is fully allowed and often better here.
+6. Use a trend ONLY when it genuinely intersects the niche. Otherwise pick a
+   strong EVERGREEN angle — evergreen is fully allowed and often better here.
 
-HIGH-PERFORMING ANGLE PATTERNS FOR THIS NICHE:
+HIGH-PERFORMING VIRAL ANGLE PATTERNS (use these, mix them):
 - "Why the rich [do X] and you were taught the opposite"
-- "The psychological trick that makes you spend $[amount] more"
-- "[Everyday thing] is designed to keep you poor — here's how"
-- "Broke people focus on [X]. Wealthy people focus on [Y]."
-- "The real reason [price/fee/subscription] exists"
+- "The $[amount] trick that [shocking outcome]"
+- "[Everyday thing] is secretly costing you $[amount] more"
+- "Broke people do [X]. Millionaires do [Y]. Here's the difference."
+- "The real reason [price/fee] exists — it's not what you think"
+- "[Percentage]% of [group] never [do X] — and it costs them everything"
+- "You lose $[amount] every time you [common action]"
+- "The [bank/company/store] doesn't want you to know this"
 
-SCORING (be honest — only strong ideas):
-- 90-100: Sharp niche insight + perfect curiosity gap + concrete detail/number
-- 75-89: Solid niche insight + good hook
-- Below 75: Do NOT include — generic, preachy, or off-niche
+SCROLL-STOP FACTOR (required for every idea):
+- Must contain a SPECIFIC NUMBER (dollar amount, percentage, or statistic)
+- Must create INSTANT tension — viewer must feel "I need to know this"
+- Must NOT be something the viewer already knows
+- Must be completable in one Sharp sentence under 12 words
+
+SCORING (be honest — only strong ideas, push for 85+):
+- 90-100: Specific number + shocking reveal + perfect curiosity gap — instant viral
+- 85-89: Strong number + solid hook — very good
+- 80-84: Decent niche insight + OK hook
+- Below 80: Do NOT include — generic, preachy, numberless, or off-niche
 
 Return ONLY valid JSON (no extra text, no markdown):
 
@@ -204,13 +214,15 @@ Return ONLY valid JSON (no extra text, no markdown):
       "trend_keyword": "trend name if used, else the core money concept",
       "topic": "specific curiosity-gap video topic (15-60 words)",
       "style": "psychology | facts | story | educational",
-      "viral_hook": "the opening line — impossible to scroll past",
+      "viral_hook": "the opening line — MUST include a number — impossible to scroll past",
+      "scroll_stop_number": "the specific $ amount / % / statistic that makes this viral",
       "trend_reason": "why people care about this money insight right now",
       "original_angle": "the specific counter-intuitive angle that makes this unique",
       "score": 88
     }}
   ]
 }}"""
+
 
     response = _generate(prompt)
 
@@ -222,7 +234,7 @@ Return ONLY valid JSON (no extra text, no markdown):
         ) from exc
 
     ideas: list[TopicIdea] = []
-    MIN_SCORE = 72  # reject weak/generic ideas
+    MIN_SCORE = 80  # Only high-quality viral ideas — raised from 72 to cut weak/generic topics
 
     for item in data.get("ideas", [])[:count * 2]:  # fetch extra, filter by score
         score = float(item.get("score", 50))
@@ -328,33 +340,37 @@ Create an original vertical short-form video script lasting exactly 25 to 32 sec
 
 HOOK RULES (most important — determines 90% of views):
 - First sentence = viewer either STAYS or LEAVES. Make it IMPOSSIBLE to scroll past.
-- Use one of: shocking money stat, bold claim, or "you've been doing X wrong" reveal.
+- MANDATORY: The hook MUST contain a SPECIFIC NUMBER ($amount, %, or statistic).
+- Use one of: shocking money stat, bold claim with number, or "you lose $X every time" reveal.
 - NEVER start with: "Hey guys", "Did you know", "Today we'll talk about", "Welcome".
-- Examples of great hooks for THIS niche:
-  * "Being poor is expensive — and it's by design."
-  * "The rich don't budget. They do this instead."
-  * "That $4 coffee is costing you way more than $4."
+- GREAT hooks for THIS niche (all have numbers):
+  * "Being poor is expensive — the average person wastes $1,200 a year without knowing it."
+  * "The rich don't budget. They track 3 numbers instead."
+  * "That $4 coffee is costing you $53,000 over your lifetime."
+  * "78% of Americans live paycheck to paycheck — and banks designed it that way."
+  * "You lose $500 every time you pay minimum balance — here's the math."
 
 SCRIPT RULES:
 - STRICTLY 60 to 75 words total (critical — 70 words = ~30 seconds at narration pace).
 - Short punchy sentences — max 10 words each.
 - Deliver ONE concrete insight with a real number, name, or mechanism — no vague fluff.
-- Build tension: hook -> surprising mechanism -> bigger reveal -> payoff line.
+- Build tension: hook → surprising mechanism → bigger reveal → payoff line.
 - End with: a mind-blowing takeaway OR "comment [specific question]" OR "follow for more".
 - Never say: AI, script, video, channel, subscribe, like.
 - Written for voice narration — must sound natural when spoken aloud.
 
 SEO RULES (for YouTube algorithm):
 - Title: MUST contain a power word (real, truth, secret, actually, never, why, rich, broke, hidden).
-  Format: "[Power word] [money concept] [emotional hook]" — under 60 chars.
-  Examples: "Why The Rich Never Feel Rich" / "The Real Reason You're Always Broke" / "Hidden Truth About Money"
+  MUST also contain a number or dollar sign for higher CTR.
+  Format: "[Power word] [money concept with number] [emotional hook]" — under 60 chars.
+  Examples: "Why 78% of People Stay Broke" / "The $4 Coffee That Cost You $53K" / "Real Reason You Have $0 Savings"
 - Description: 2-3 sentences, include the main money keyword naturally, end with a question.
 - Hashtags: exactly 15 tags — mix these 3 pools for maximum reach:
   POOL 1 — Niche-specific (5 tags): moneypsychology, moneymindset, personalfinance, financialliteracy, wealthmindset
   POOL 2 — Viral Shorts (5 tags): shorts, viral, trending, fyp, explore
   POOL 3 — Broad discovery (5 tags): motivation, success, money, wealth, facts
   ALWAYS include "shorts" and "viral" in the final list.
-- Thumbnail text: 2-4 SHOCKING CAPITALIZED words that make people click instantly.
+- Thumbnail text: 2-4 SHOCKING CAPITALIZED WORDS — must include a number or dollar sign.
 
 VISUAL KEYWORDS:
 - Exactly 5 specific cinematic visual search phrases that match money/wealth imagery.
@@ -373,8 +389,8 @@ Choose the voice that best fits the content energy:
 Return ONLY valid JSON in exactly this format:
 
 {{
-    "title": "CTR-optimized title with power word, under 60 chars",
-    "hook": "jaw-dropping opening sentence — makes viewer stop scrolling",
+    "title": "CTR-optimized title with power word AND number, under 60 chars",
+    "hook": "jaw-dropping opening sentence — MUST contain a specific number — makes viewer stop scrolling",
     "script": "complete narration STRICTLY 60-75 words — ends with engagement CTA",
     "keywords": [
         "cinematic visual phrase 1",
@@ -385,12 +401,13 @@ Return ONLY valid JSON in exactly this format:
     ],
     "description": "2-3 sentence SEO description ending with a question",
     "hashtags": ["moneypsychology", "moneymindset", "personalfinance", "financialliteracy", "wealthmindset", "shorts", "viral", "trending", "fyp", "explore", "motivation", "success", "money", "wealth", "facts"],
-    "thumbnail_text": "2-4 SHOCKING CAPITALIZED WORDS",
+    "thumbnail_text": "2-4 SHOCKING CAPITALIZED WORDS WITH A NUMBER",
     "category": "education | psychology | facts | story | motivation",
     "voice": "one voice from the allowed list",
     "style": "{style}"
 }}
 """
+
 
     response = _generate(prompt)
 

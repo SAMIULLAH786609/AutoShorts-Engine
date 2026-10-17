@@ -438,6 +438,64 @@ def fetch_newsapi_trends() -> list[TrendItem]:
 
 
 # ---------------------------------------------------------------------------
+# Money-niche relevance filter
+# ---------------------------------------------------------------------------
+
+# Keywords that signal a trend is relevant to the Money & Wealth Psychology niche.
+# Any trend whose title or description contains at least one of these words
+# is kept; everything else is dropped before sending to Gemini.
+_MONEY_KEYWORDS: tuple[str, ...] = (
+    "money", "rich", "wealth", "billionaire", "millionaire", "salary",
+    "income", "budget", "debt", "bank", "invest", "profit", "economy",
+    "price", "inflation", "tax", "finance", "stock", "cost", "spend",
+    "broke", "poor", "savings", "crypto", "scam", "fraud", "luxury",
+    "expensive", "cheap", "afford", "loan", "credit", "cash", "dollar",
+    "earn", "earning", "wage", "raise", "bonus", "pension", "retirement",
+    "recession", "bankruptcy", "fee", "charge", "tip", "subscription",
+    "paycheck", "payroll", "hedge", "fund", "venture", "startup",
+    "entrepreneur", "business", "revenue", "interest", "rate", "housing",
+    "rent", "mortgage", "insurance", "poverty", "inequality",
+    "consumer", "spending", "shopping", "discount", "deal", "price hike",
+    "cost of living", "minimum wage", "net worth",
+)
+
+
+def _is_money_relevant(item: "TrendItem") -> bool:
+    """Return True if a trend item touches the Money & Wealth Psychology niche."""
+    haystack = (item.title + " " + item.description).lower()
+    return any(kw in haystack for kw in _MONEY_KEYWORDS)
+
+
+def _filter_for_money_niche(
+    items: list["TrendItem"],
+    max_non_niche: int = 20,
+) -> list["TrendItem"]:
+    """
+    Split items into niche-relevant and generic buckets.
+
+    Niche-relevant items are kept in full (they directly fuel on-topic ideas).
+    A small number of high-popularity generic items are appended afterwards so
+    Gemini still has broader cultural context to draw evergreen angles from,
+    without being swamped by off-niche noise.
+    """
+    niche: list[TrendItem] = []
+    generic: list[TrendItem] = []
+
+    for item in items:
+        (niche if _is_money_relevant(item) else generic).append(item)
+
+    # Keep only the most popular generic items as background context
+    generic_sorted = sorted(generic, key=lambda x: x.popularity, reverse=True)
+    filtered = niche + generic_sorted[:max_non_niche]
+
+    log.info(
+        "Niche filter: %d money-relevant + %d generic context = %d total (was %d)",
+        len(niche), min(len(generic), max_non_niche), len(filtered), len(items),
+    )
+    return filtered
+
+
+# ---------------------------------------------------------------------------
 # Main aggregator
 # ---------------------------------------------------------------------------
 
@@ -451,6 +509,11 @@ def collect_worldwide_trends() -> list[dict[str, Any]]:
 
     Deduplication is applied to avoid sending near-identical headlines
     to Gemini, which wastes context and produces repetitive ideas.
+
+    Money-niche filtering is applied last: niche-relevant trends are
+    prioritised, and only a small number of high-popularity generic items
+    are kept as background context. This keeps the Gemini prompt focused
+    and dramatically improves topic relevance.
     """
     log.info("Starting worldwide trend collection...")
 
@@ -496,4 +559,8 @@ def collect_worldwide_trends() -> list[dict[str, Any]]:
         "Trends: %d raw -> %d after deduplication",
         len(combined), len(deduped),
     )
-    return [asdict(item) for item in deduped]
+
+    # Apply money-niche filter — keep niche-relevant trends + top generic context
+    niche_filtered = _filter_for_money_niche(deduped, max_non_niche=20)
+
+    return [asdict(item) for item in niche_filtered]

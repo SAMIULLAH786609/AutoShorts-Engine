@@ -141,3 +141,93 @@ def _parse_stats(data: dict, video_id: str) -> dict | None:
         "likes":    int(stats.get("likeCount",    0)),
         "comments": int(stats.get("commentCount", 0)),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# YouTube Video Delete
+# ─────────────────────────────────────────────────────────────────────────────
+
+YT_DELETE_URL = "https://www.googleapis.com/youtube/v3/videos"
+
+
+def delete_youtube_video(channel, video_id: str) -> bool:
+    """
+    Permanently delete a YouTube video using the channel's OAuth token.
+
+    Parameters
+    ----------
+    channel  : YouTubeChannel ORM model with stored OAuth tokens.
+    video_id : YouTube video ID to delete (e.g. 'dQw4w9WgXcQ').
+
+    Returns
+    -------
+    True  — video deleted successfully (or was already gone).
+    False — deletion failed (token issues, permission error, etc.).
+    """
+    from backend.auth_service import decrypt_token
+
+    # --- Attempt 1: use stored OAuth access token ---
+    access_token = None
+    try:
+        access_token = decrypt_token(channel.access_token_enc) if channel.access_token_enc else None
+    except Exception as exc:
+        log.warning("Could not decrypt access token for delete: %s", exc)
+
+    if access_token:
+        result = _delete_with_token(video_id, access_token)
+        if result is not None:
+            return result
+
+    # --- Attempt 2: refresh the access token and retry ---
+    try:
+        new_token = _refresh_access_token(channel)
+        if new_token:
+            result = _delete_with_token(video_id, new_token)
+            if result is not None:
+                return result
+    except Exception as exc:
+        log.warning("Token refresh for delete failed: %s", exc)
+
+    log.error(
+        "delete_youtube_video: could not delete %s — no valid OAuth token available.",
+        video_id,
+    )
+    return False
+
+
+def _delete_with_token(video_id: str, access_token: str) -> bool | None:
+    """
+    Call YouTube Data API videos.delete using an OAuth Bearer token.
+
+    Returns
+    -------
+    True  — deleted (HTTP 204).
+    True  — already deleted / not found (HTTP 404).
+    None  — token expired (HTTP 401); caller should refresh.
+    False — other error.
+    """
+    resp = requests.delete(
+        YT_DELETE_URL,
+        params={"id": video_id},
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+
+    if resp.status_code == 204:
+        log.info("YouTube video %s deleted successfully (204).", video_id)
+        return True
+
+    if resp.status_code == 404:
+        log.info("YouTube video %s already gone (404) — treating as deleted.", video_id)
+        return True
+
+    if resp.status_code == 401:
+        log.warning("Access token expired (401) while trying to delete %s.", video_id)
+        return None  # caller should try to refresh
+
+    log.error(
+        "Failed to delete YouTube video %s: HTTP %d — %s",
+        video_id, resp.status_code, resp.text[:300],
+    )
+    return False
+

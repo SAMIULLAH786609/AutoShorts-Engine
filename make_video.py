@@ -29,7 +29,7 @@ VIDEO_WIDTH = 720
 VIDEO_HEIGHT = 1280
 FPS = 30
 VOICE = "en-US-AriaNeural"
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash-lite"
 
 # Windows font path. Change it if Arial is not available.
 FONT_PATH = r"C:\Windows\Fonts\arialbd.ttf"
