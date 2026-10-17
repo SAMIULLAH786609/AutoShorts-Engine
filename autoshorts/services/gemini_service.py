@@ -338,26 +338,21 @@ REQUESTED STYLE:
 
 Create an original vertical short-form video script lasting exactly 25 to 32 seconds.
 
-HOOK RULES (most important — determines 90% of views):
-- First sentence = viewer either STAYS or LEAVES. Make it IMPOSSIBLE to scroll past.
-- MANDATORY: The hook MUST contain a SPECIFIC NUMBER ($amount, %, or statistic).
-- Use one of: shocking money stat, bold claim with number, or "you lose $X every time" reveal.
-- NEVER start with: "Hey guys", "Did you know", "Today we'll talk about", "Welcome".
-- GREAT hooks for THIS niche (all have numbers):
-  * "Being poor is expensive — the average person wastes $1,200 a year without knowing it."
-  * "The rich don't budget. They track 3 numbers instead."
-  * "That $4 coffee is costing you $53,000 over your lifetime."
-  * "78% of Americans live paycheck to paycheck — and banks designed it that way."
-  * "You lose $500 every time you pay minimum balance — here's the math."
+HOOK RULES (Critical — YouTube Shorts Feed tests first 2 seconds):
+- First sentence = viewer either SWIPES or WATCHES. Make it impossible to scroll past in the first 1.5 seconds.
+- MANDATORY: The hook MUST start with a shocking number ($amount, %, or unexpected statistic).
+- NEVER start with pleasantries: "Hey guys", "Did you know", "Today", "Welcome", "In this video".
+- Start directly in media res:
+  * "78% of people spend this money without even realizing..."
+  * "That $5 item is secretly costing you over $40,000..."
+  * "The richest 1% use this exact 3-step banking trick..."
 
-SCRIPT RULES:
-- STRICTLY 60 to 75 words total (critical — 70 words = ~30 seconds at narration pace).
-- Short punchy sentences — max 10 words each.
-- Deliver ONE concrete insight with a real number, name, or mechanism — no vague fluff.
-- Build tension: hook → surprising mechanism → bigger reveal → payoff line.
-- End with: a mind-blowing takeaway OR "comment [specific question]" OR "follow for more".
-- Never say: AI, script, video, channel, subscribe, like.
-- Written for voice narration — must sound natural when spoken aloud.
+SCRIPT & RETENTION RULES (For 100%+ View Duration on Shorts Shelf):
+- STRICTLY 50 to 65 words total (aim for 22 to 28 seconds — shorter Shorts get rewatched, causing YouTube to boost them into millions of feeds).
+- Punchy, fast-moving sentences — maximum 8 words per sentence.
+- SEAMLESS LOOP (Crucial): The final sentence must seamlessly connect back to the very first hook sentence, so when the video replays on loop, the viewer doesn't realize it started over.
+- Never use filler words, never mention "subscribe" or "like" (distracts viewer and increases swipe-away rate).
+- Written exclusively for spoken voice — smooth, rhythmic cadence.
 
 SEO RULES (for YouTube algorithm):
 - Title: MUST contain a power word (real, truth, secret, actually, never, why, rich, broke, hidden).

@@ -369,32 +369,37 @@ def _upload_to_youtube(
     youtube = build("youtube", "v3", credentials=credentials)
 
     description = plan.description
-    hashtag_str = " ".join(f"#{t}" for t in plan.hashtags)
+    hashtag_str = " ".join(f"#{t.lstrip('#')}" for t in plan.hashtags if t.strip())
 
-    # #Shorts + viral tags MUST appear in description — YouTube only shows video
-    # in the Shorts feed if #Shorts is present. fyp/viral/trending boost impressions.
-    shorts_core = "#Shorts #Short #YouTubeShorts #fyp #viral #trending"
-    if hashtag_str:
-        description += f"\n\n{shorts_core} {hashtag_str}"
-    else:
-        description += f"\n\n{shorts_core}"
+    # CRITICAL FOR SHORTS FEED:
+    # 1. Title MUST have #Shorts or YouTube treats it as a regular video (shows in search instead of feed).
+    # 2. #Shorts tags MUST be at the VERY TOP of description for the Shorts classifier.
+    title = plan.title.strip()
+    if "#shorts" not in title.lower():
+        # Keep total title under 100 characters while ensuring #Shorts tag is present
+        if len(title) > 90:
+            title = title[:88].rstrip()
+        title = f"{title} #Shorts"
 
-    # Build tags list — guaranteed viral + niche tags for maximum search discovery
-    guaranteed_tags = ["Shorts", "Short", "YouTubeShorts", "fyp", "viral", "trending", "explore"]
+    shorts_top_tags = "#Shorts #Short #YouTubeShorts #viral #trending #fyp"
+    full_description = f"{shorts_top_tags}\n\n{description}\n\n{hashtag_str}"
+
+    # Build tags list — guaranteed viral + niche tags for maximum feed distribution
+    guaranteed_tags = ["Shorts", "Short", "YouTubeShorts", "shorts feed", "viral", "trending", "fyp", "explore"]
     plan_tags = [t.strip().lstrip("#") for t in plan.hashtags if t.strip()]
     all_tags  = list(dict.fromkeys(guaranteed_tags + plan_tags))[:30]  # dedupe + cap
 
     request_body = {
         "snippet": {
-            "title":           plan.title[:100],
-            "description":     description[:5000],
+            "title":           title[:100],
+            "description":     full_description[:5000],
             "tags":            all_tags,
-            "categoryId":      "27",   # 27 = Education (correct for facts/money content)
+            "categoryId":      "27",   # 27 = Education / Facts
             "defaultLanguage": "en",
         },
         "status": {
             "privacyStatus":             privacy,
-            "selfDeclaredMadeForKids":   False,   # Required for Shorts monetization
+            "selfDeclaredMadeForKids":   False,   # Required for Shorts feed algorithm & monetization
             "madeForKids":               False,
         },
     }
