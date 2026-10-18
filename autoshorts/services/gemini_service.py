@@ -65,7 +65,8 @@ def _generate(prompt: str, attempts_per_model: int = 2) -> Any:
     Call Gemini with automatic retry and model fallback.
     Returns the raw response object.
     """
-    if not GEMINI_API_KEY:
+    api_key = GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
         raise RuntimeError("GEMINI_API_KEY is missing from .env")
 
     # Remove duplicates while preserving order
@@ -76,7 +77,7 @@ def _generate(prompt: str, attempts_per_model: int = 2) -> Any:
             models_seen.add(m)
             models.append(m)
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=api_key)
     last_error: Exception | None = None
 
     for model in models:

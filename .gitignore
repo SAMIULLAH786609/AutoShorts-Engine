@@ -51,6 +51,8 @@ node_modules/
 dist/
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
+.vite/
 .eslintcache
 .claude/
 scratch/
