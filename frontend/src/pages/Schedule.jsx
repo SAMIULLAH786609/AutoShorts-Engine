@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import Sidebar from '../components/Sidebar'
-import api from '../api/client'
+import api, { errorMessage } from '../api/client'
 
 // Compute preview slots (same logic as backend)
 function computeSlots(startTime, endTime, count) {
@@ -13,9 +13,12 @@ function computeSlots(startTime, endTime, count) {
     return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`
   }
   const s = parse(startTime || '09:00')
-  const e = parse(endTime   || '23:00')
-  if (count <= 0) return []
-  if (count === 1) return [fmt(s)]
+  let   e = parse(endTime   || '23:00')
+  if (!(count > 0) || Number.isNaN(s) || Number.isNaN(e)) return []
+  // Mirror backend/scheduler.py _compute_slots: an end before the start
+  // collapses to a single slot at the start time.
+  if (s > e) e = s
+  if (count === 1 || s === e) return [fmt(s)]
   const step = (e - s) / (count - 1)
   return Array.from({ length: count }, (_, i) => fmt(Math.round(s + i * step)))
 }
@@ -53,12 +56,15 @@ export default function Schedule() {
     e.preventDefault()
     setError('')
     setSuccess('')
+    const vpd = Math.trunc(Number(schedule.videos_per_day))
+    if (!(vpd >= 1 && vpd <= 100)) { setError('Shorts per day must be between 1 and 100'); return }
+    if (schedule.start_time > schedule.end_time) { setError('End time must be after start time'); return }
     setSaving(true)
     try {
-      const r = await api.put('/schedule', schedule)
+      await api.put('/schedule', { ...schedule, videos_per_day: vpd })
       setSuccess('✅ Schedule saved! Shorts will be generated automatically.')
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to update schedule')
+      setError(errorMessage(err, 'Failed to update schedule'))
     } finally {
       setSaving(false)
     }
@@ -66,7 +72,7 @@ export default function Schedule() {
 
   const setVal = key => e => {
     const val = e.target.type === 'checkbox' ? e.target.checked
-              : e.target.type === 'number'   ? Number(e.target.value)
+              : e.target.type === 'number'   ? (e.target.value === '' ? '' : Number(e.target.value))
               : e.target.value
     setSchedule(s => ({ ...s, [key]: val }))
   }

@@ -116,11 +116,19 @@ def generate_thumbnail(
     )
 
     # ── 4. Thumbnail text (large, centred, vertically centred) ──────────────
+    # Wrap text, then shrink the font until the widest line fits inside the
+    # frame (a fixed 160px font with 12-char lines overflowed a 720px canvas).
+    lines = textwrap.wrap((thumbnail_text or title).upper(), width=12) or [""]
+    max_text_w = THUMBNAIL_WIDTH - 60
     thumb_font_size = 160
     thumb_font = _load_font(thumb_font_size)
+    while thumb_font_size > 40:
+        widest = max(draw.textlength(line, font=thumb_font) for line in lines)
+        if widest <= max_text_w:
+            break
+        thumb_font_size -= 8
+        thumb_font = _load_font(thumb_font_size)
 
-    # Wrap text
-    lines = textwrap.wrap(thumbnail_text.upper(), width=12)
     line_height = thumb_font_size + 20
     total_text_height = len(lines) * line_height
     start_y = (THUMBNAIL_HEIGHT - total_text_height) // 2 - 80

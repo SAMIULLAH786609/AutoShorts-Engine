@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
-import api from '../api/client'
+import api, { errorMessage } from '../api/client'
 
 const STATUS_BADGE = {
   complete: <span className="badge badge-success">✓ Uploaded</span>,
@@ -78,7 +78,7 @@ export default function Dashboard() {
       setSuccess('🎬 Video generation started! Refresh in a few minutes to see progress.')
       await fetchStats()
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to trigger video generation')
+      setError(errorMessage(err, 'Failed to trigger video generation'))
     } finally {
       setTriggering(false)
     }
@@ -93,7 +93,7 @@ export default function Dashboard() {
       setSuccess('⏹️ Video generation stopped successfully.')
       await fetchStats()
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to stop video generation')
+      setError(errorMessage(err, 'Failed to stop video generation'))
     }
   }
 
@@ -109,7 +109,7 @@ export default function Dashboard() {
     } catch (err) {
       // Auto-refresh runs quietly in the background — only surface an
       // error banner when the user explicitly clicked the button.
-      if (!silent) setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
+      if (!silent) setError(errorMessage(err, 'Failed to fetch YouTube stats'))
     } finally {
       setRefreshing(r => ({ ...r, [jobId]: false }))
     }

@@ -217,6 +217,9 @@ def _check_and_fire_scheduled_jobs() -> None:
                 retry_count = retry_count,
             )
             log.info("CRASH RECOVERY: stuck job %s -> new job %s", stuck.id[:8], new_job.id[:8])
+            # Only one pipeline may run at a time — any other stuck jobs and
+            # scheduled slots are handled on a later tick.
+            return
 
         # ── PART 2: SCHEDULED FIRING ─────────────────────────────────────────
         schedules = (
@@ -239,14 +242,16 @@ def _check_and_fire_scheduled_jobs() -> None:
             if not due_slots:
                 continue
 
-            # Count scheduled jobs already done today
+            # Count scheduled slots already attempted today. Failed attempts
+            # count too: their recovery is handled by the auto-retry logic
+            # (trigger="retry"), so re-firing here would create a new video
+            # every minute whenever a slot fails.
             today_jobs = (
                 db.query(VideoJob)
                 .filter(
                     VideoJob.user_id    == user.id,
                     VideoJob.trigger    == "scheduled",
                     VideoJob.created_at >= today_start,
-                    VideoJob.status.in_(["pending", "running", "complete"]),
                 )
                 .count()
             )
@@ -289,6 +294,8 @@ def _check_and_fire_scheduled_jobs() -> None:
                 "Scheduled job fired for user %s | slot %d/%d at %s UTC (job %s)",
                 user.email, today_jobs + 1, max_videos, now_time, new_job.id[:8],
             )
+            # Strict single-job concurrency: other users wait for the next tick.
+            return
 
     except Exception as exc:
         log.exception("Scheduler check failed: %s", exc)
@@ -409,6 +416,7 @@ def _auto_delete_zero_view_videos() -> None:
     For every completed video job where:
       - youtube_video_id is set  (it was uploaded to YouTube)
       - completed_at is >= 48 hours ago
+      - the video is PUBLIC (private/unlisted videos are always kept)
       - fresh view count == 0
 
     → Delete the video from YouTube
@@ -467,6 +475,16 @@ def _auto_delete_zero_view_videos() -> None:
                 log.warning(
                     "AUTO-DELETE: Could not fetch stats for video %s (job %s): %s. Skipping.",
                     video_id, job.id[:8], exc,
+                )
+                skipped_count += 1
+                continue
+
+            # Private / unlisted videos never get views — only judge public ones.
+            privacy = stats.get("privacy", "")
+            if privacy != "public":
+                log.info(
+                    "AUTO-DELETE: Keeping video %s (job %s) — privacy is '%s', not public.",
+                    video_id, job.id[:8], privacy or "unknown",
                 )
                 skipped_count += 1
                 continue

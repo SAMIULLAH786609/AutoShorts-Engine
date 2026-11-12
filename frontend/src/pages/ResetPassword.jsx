@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import api from '../api/client'
+import api, { errorMessage } from '../api/client'
 import ThemeToggleFloating from '../components/ThemeToggleFloating'
 
 export default function ResetPassword() {
@@ -25,7 +25,7 @@ export default function ResetPassword() {
       setDone(true)
       setTimeout(() => navigate('/login'), 2500)
     } catch (err) {
-      setError(err.response?.data?.detail || 'Reset failed. The link may have expired.')
+      setError(errorMessage(err, 'Reset failed. The link may have expired.'))
     } finally {
       setLoading(false)
     }

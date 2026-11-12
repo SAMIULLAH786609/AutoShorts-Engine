@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { errorMessage } from '../api/client'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import ThemeToggleFloating from '../components/ThemeToggleFloating'
@@ -21,7 +22,7 @@ export default function Register() {
       await register(form.name, form.email, form.password)
       navigate('/dashboard')
     } catch (err) {
-      setError(err.response?.data?.detail || 'Registration failed. Please try again.')
+      setError(errorMessage(err, 'Registration failed. Please try again.'))
     } finally {
       setLoading(false)
     }

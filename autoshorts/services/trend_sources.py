@@ -16,6 +16,7 @@ Results are merged and returned as a unified list of TrendItem objects.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict
 from typing import Any
@@ -151,7 +152,6 @@ RSS_FEEDS: dict[str, str] = {
     # Breaking news
     "BBC World":          "https://feeds.bbci.co.uk/news/world/rss.xml",
     "BBC Science":        "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
-    "Reuters World":      "https://feeds.reuters.com/reuters/worldNews",
     "Al Jazeera":         "https://www.aljazeera.com/xml/rss/all.xml",
     "Google News Top":    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
     "Google News Sci":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RZU0FtVnVHZ0pWVXlnQVAB",
@@ -224,8 +224,16 @@ def fetch_google_trends() -> list[TrendItem]:
 
     for geo_code, geo_name in GOOGLE_TRENDS_REGIONS:
         try:
-            url = f"https://trends.google.com/trends/trendingsearches/daily/rss?geo={geo_code}"
-            parsed = feedparser.parse(url)
+            # Google retired /trends/trendingsearches/daily/rss — /trending/rss is
+            # the current feed. Keep the legacy URL as a fallback.
+            parsed = None
+            for url in (
+                f"https://trends.google.com/trending/rss?geo={geo_code}",
+                f"https://trends.google.com/trends/trendingsearches/daily/rss?geo={geo_code}",
+            ):
+                parsed = feedparser.parse(url)
+                if parsed.entries:
+                    break
 
             for entry in parsed.entries[:20]:
                 title = str(entry.get("title", "")).strip()
@@ -460,10 +468,18 @@ _MONEY_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# Whole-word match (allowing plural "s"). Plain substring matching made short
+# keywords hit unrelated words — "tip" in "multiple", "rate" in "generate",
+# "fee" in "coffee", "rent" in "current" — so almost every trend passed.
+_MONEY_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(k) for k in _MONEY_KEYWORDS) + r")s?\b",
+    re.IGNORECASE,
+)
+
+
 def _is_money_relevant(item: "TrendItem") -> bool:
     """Return True if a trend item touches the Money & Wealth Psychology niche."""
-    haystack = (item.title + " " + item.description).lower()
-    return any(kw in haystack for kw in _MONEY_KEYWORDS)
+    return bool(_MONEY_RE.search(item.title + " " + item.description))
 
 
 def _filter_for_money_niche(

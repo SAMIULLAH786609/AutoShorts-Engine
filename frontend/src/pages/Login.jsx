@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { errorMessage } from '../api/client'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import ThemeToggleFloating from '../components/ThemeToggleFloating'
@@ -19,7 +20,7 @@ export default function Login() {
       await login(email, password)
       navigate('/dashboard')
     } catch (err) {
-      setError(err.response?.data?.detail || 'Login failed. Please try again.')
+      setError(errorMessage(err, 'Login failed. Please try again.'))
     } finally {
       setLoading(false)
     }

@@ -33,7 +33,8 @@ def fetch_video_stats(channel, video_id: str) -> dict:
 
     Returns
     -------
-    dict with keys: 'views', 'likes', 'comments'
+    dict with keys: 'views', 'likes', 'comments', 'privacy'
+    ('privacy' is '' when the API did not report it).
     """
     # --- Attempt 1: use stored OAuth access token directly ---
     try:
@@ -80,7 +81,7 @@ def _fetch_with_token(video_id: str, access_token: str) -> dict | None:
     """Call YouTube Data API using OAuth Bearer token."""
     resp = requests.get(
         YT_VIDEOS_URL,
-        params={"part": "statistics", "id": video_id},
+        params={"part": "statistics,status", "id": video_id},
         headers={"Authorization": f"Bearer {access_token}"},
         timeout=10,
     )
@@ -95,7 +96,7 @@ def _fetch_with_api_key(video_id: str, api_key: str) -> dict | None:
     """Call YouTube Data API using a server API key (works for public videos)."""
     resp = requests.get(
         YT_VIDEOS_URL,
-        params={"part": "statistics", "id": video_id, "key": api_key},
+        params={"part": "statistics,status", "id": video_id, "key": api_key},
         timeout=10,
     )
     resp.raise_for_status()
@@ -132,14 +133,18 @@ def _parse_stats(data: dict, video_id: str) -> dict | None:
     """Parse the YouTube API response and return stats dict."""
     items = data.get("items", [])
     if not items:
+        # Private videos are invisible to API-key requests and deleted videos
+        # return nothing either. Report "unknown" rather than 0 views — a fake
+        # 0 would make the auto-delete job remove videos that were never public.
         log.warning("YouTube API returned no items for video %s (private/deleted?)", video_id)
-        return {"views": 0, "likes": 0, "comments": 0}
+        return None
 
     stats = items[0].get("statistics", {})
     return {
         "views":    int(stats.get("viewCount",    0)),
         "likes":    int(stats.get("likeCount",    0)),
         "comments": int(stats.get("commentCount", 0)),
+        "privacy":  str(items[0].get("status", {}).get("privacyStatus", "")),
     }
 
 

@@ -12,6 +12,7 @@ Uses automatic retry across fallback models.
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -53,6 +54,21 @@ def _clean_json(text: str) -> str:
     text = re.sub(r"^```\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     return text.strip()
+
+
+def _parse_score(value: Any, default: float = 50.0) -> float:
+    """Parse a score Gemini may return as 88, "88", or "88/100"."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        match = re.search(r"\d+(?:\.\d+)?", str(value))
+        return float(match.group()) if match else default
+
+
+def _ideas_list(data: Any) -> list[dict]:
+    """Return the list of idea dicts whether Gemini wrapped it in {"ideas": [...]} or not."""
+    items = data.get("ideas", []) if isinstance(data, dict) else data
+    return [i for i in (items or []) if isinstance(i, dict)]
 
 
 def _is_temporary(error: Exception) -> bool:
@@ -237,8 +253,8 @@ Return ONLY valid JSON (no extra text, no markdown):
     ideas: list[TopicIdea] = []
     MIN_SCORE = 80  # Only high-quality viral ideas — raised from 72 to cut weak/generic topics
 
-    for item in data.get("ideas", [])[:count * 2]:  # fetch extra, filter by score
-        score = float(item.get("score", 50))
+    for item in _ideas_list(data)[:count * 2]:  # fetch extra, filter by score
+        score = _parse_score(item.get("score", 50))
         topic_text = str(item.get("topic", "")).strip()
         if not topic_text or score < MIN_SCORE:
             log.debug("Skipping low-score idea (%.0f): %s", score, topic_text[:60])
@@ -387,7 +403,7 @@ Return ONLY valid JSON in exactly this format:
 {{
     "title": "CTR-optimized title with power word AND number, under 60 chars",
     "hook": "jaw-dropping opening sentence — MUST contain a specific number — makes viewer stop scrolling",
-    "script": "complete narration STRICTLY 60-75 words — ends with engagement CTA",
+    "script": "complete narration STRICTLY 50-65 words — no CTA, final line loops back into the hook",
     "keywords": [
         "cinematic visual phrase 1",
         "cinematic visual phrase 2",
@@ -510,8 +526,8 @@ Return ONLY valid JSON:
         raise RuntimeError(f"Gemini returned invalid JSON:\n{response.text}") from exc
 
     ideas: list[TopicIdea] = []
-    for item in data.get("ideas", [])[:count * 2]:
-        score = float(item.get("score", 50))
+    for item in _ideas_list(data)[:count * 2]:
+        score = _parse_score(item.get("score", 50))
         topic_text = str(item.get("topic", "")).strip()
         if not topic_text or score < 65:
             continue

@@ -4,10 +4,35 @@ AutoShorts Backend — Pydantic Schemas (request/response validation).
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+def _check_password_strength(v: str) -> str:
+    if not any(c.isupper() for c in v):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if not any(c.isdigit() for c in v):
+        raise ValueError("Password must contain at least one number")
+    # bcrypt only uses the first 72 bytes; newer bcrypt versions reject longer input
+    if len(v.encode("utf-8")) > 72:
+        raise ValueError("Password is too long (max 72 bytes)")
+    return v
+
+
+_HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _check_hhmm(v: Optional[str]) -> Optional[str]:
+    """Validate HH:MM — a malformed time would crash the scheduler every minute."""
+    if v is None:
+        return v
+    v = v.strip()[:5]   # accept "09:00:00" sent by some browsers
+    if not _HHMM_RE.match(v):
+        raise ValueError("Time must be in HH:MM (24-hour) format")
+    return v
 
 
 # ─────────────────────────────────────────────────────────────
@@ -22,11 +47,7 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
-        if not any(c.isupper() for c in v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one number")
-        return v
+        return _check_password_strength(v)
 
 
 class LoginRequest(BaseModel):
@@ -48,10 +69,20 @@ class ResetPasswordRequest(BaseModel):
     token:        str
     new_password: str = Field(..., min_length=8, max_length=100)
 
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _check_password_strength(v)
+
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password:     str = Field(..., min_length=8)
+    new_password:     str = Field(..., min_length=8, max_length=100)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _check_password_strength(v)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -64,23 +95,38 @@ class UserResponse(BaseModel):
     name:             str
     is_active:        bool
     is_verified:      bool
-    channel_niche:    str
-    default_language: str
-    default_gender:   str
-    default_privacy:  str
-    videos_per_day:   int
+    channel_niche:    Optional[str] = None
+    default_language: Optional[str] = "English"
+    default_gender:   Optional[str] = "female"
+    default_privacy:  Optional[str] = "private"
+    videos_per_day:   Optional[int] = 3
     created_at:       datetime
 
     model_config = {"from_attributes": True}
 
 
 class UpdateSettingsRequest(BaseModel):
-    name:             Optional[str] = None
-    channel_niche:    Optional[str] = None
-    default_language: Optional[str] = None
+    name:             Optional[str] = Field(None, min_length=2, max_length=100)
+    channel_niche:    Optional[str] = Field(None, max_length=255)
+    default_language: Optional[str] = Field(None, max_length=20)
     default_gender:   Optional[str] = None
     default_privacy:  Optional[str] = None
     videos_per_day:   Optional[int] = Field(None, ge=1, le=10)
+
+    @field_validator("default_gender")
+    @classmethod
+    def valid_gender(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("female", "male"):
+            raise ValueError("default_gender must be 'female' or 'male'")
+        return v
+
+    @field_validator("default_privacy")
+    @classmethod
+    def valid_privacy(cls, v: Optional[str]) -> Optional[str]:
+        # YouTube rejects any other value at upload time, failing every video
+        if v is not None and v not in ("private", "unlisted", "public"):
+            raise ValueError("default_privacy must be 'private', 'unlisted' or 'public'")
+        return v
 
 
 # ─────────────────────────────────────────────────────────────
@@ -114,9 +160,9 @@ class JobResponse(BaseModel):
     youtube_video_id: Optional[str]
     youtube_url:      Optional[str]
     error_message:    Optional[str]
-    retry_count:      int
-    duration:         float
-    trigger:          str
+    retry_count:      Optional[int] = 0
+    duration:         Optional[float] = 0.0
+    trigger:          Optional[str] = "manual"
     created_at:       datetime
     started_at:       Optional[datetime]
     completed_at:     Optional[datetime]
@@ -161,6 +207,11 @@ class UpdateScheduleRequest(BaseModel):
     time_slot_3:    Optional[str]  = None
     timezone:       Optional[str]  = None
     is_active:      Optional[bool] = None
+
+    @field_validator("start_time", "end_time", "time_slot_1", "time_slot_2", "time_slot_3")
+    @classmethod
+    def valid_time(cls, v: Optional[str]) -> Optional[str]:
+        return _check_hhmm(v)
 
 
 # ─────────────────────────────────────────────────────────────

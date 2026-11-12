@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
-import api from '../api/client'
+import api, { errorMessage } from '../api/client'
 
 const STATUS_BADGE = {
   complete: <span className="badge badge-success">✓ Uploaded</span>,
@@ -68,7 +68,7 @@ export default function VideoHistory() {
       await api.delete(`/jobs/${id}`)
       setJobs(prev => prev.filter(j => j.id !== id))
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to delete record')
+      alert(errorMessage(err, 'Failed to delete record'))
     }
   }
 
@@ -81,7 +81,7 @@ export default function VideoHistory() {
     } catch (err) {
       // Auto-refresh runs quietly in the background — only surface an
       // error banner when the user explicitly clicked the button.
-      if (!silent) setError(err.response?.data?.detail || 'Failed to fetch YouTube stats')
+      if (!silent) setError(errorMessage(err, 'Failed to fetch YouTube stats'))
     } finally {
       setRefreshing(r => ({ ...r, [jobId]: false }))
     }

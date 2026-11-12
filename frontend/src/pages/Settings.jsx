@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
-import api from '../api/client'
+import api, { errorMessage } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 
 export default function Settings() {
@@ -62,6 +63,25 @@ export default function Settings() {
     fetchChannels()
   }, [])
 
+  // Show the result of the Google OAuth redirect (?connected=true / ?error=...)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [channelSuccess, setChannelSuccess] = useState('')
+  useEffect(() => {
+    const oauthError = searchParams.get('error')
+    const connected  = searchParams.get('connected')
+    if (!oauthError && !connected) return
+    const messages = {
+      access_denied:         'YouTube connection was cancelled.',
+      invalid_state:         'The connection link expired. Please try again.',
+      missing_code:          'Google did not return an authorization code. Please try again.',
+      token_exchange_failed: 'Could not complete sign-in with Google. Please try again.',
+      no_youtube_channel:    'No YouTube channel was found on that Google account.',
+    }
+    if (oauthError) setChannelError(messages[oauthError] || `YouTube connection failed: ${oauthError}`)
+    if (connected)  setChannelSuccess('✅ YouTube channel connected!')
+    setSearchParams({}, { replace: true })
+  }, [searchParams, setSearchParams])
+
   const handleSettingsSubmit = async e => {
     e.preventDefault()
     setSettingsError('')
@@ -72,7 +92,7 @@ export default function Settings() {
       await refreshUser()
       setSettingsSuccess('⚙️ Settings updated successfully!')
     } catch (err) {
-      setSettingsError(err.response?.data?.detail || 'Failed to update settings')
+      setSettingsError(errorMessage(err, 'Failed to update settings'))
     } finally {
       setSavingSettings(false)
     }
@@ -88,7 +108,7 @@ export default function Settings() {
       setPwSuccess('🔐 Password updated successfully!')
       setPasswordForm({ current_password: '', new_password: '' })
     } catch (err) {
-      setPwError(err.response?.data?.detail || 'Failed to update password')
+      setPwError(errorMessage(err, 'Failed to update password'))
     } finally {
       setSavingPassword(false)
     }
@@ -104,7 +124,7 @@ export default function Settings() {
         setChannelError('Failed to retrieve connection URL')
       }
     } catch (err) {
-      setChannelError(err.response?.data?.detail || 'Failed to trigger connection flow')
+      setChannelError(errorMessage(err, 'Failed to trigger connection flow'))
     }
   }
 
@@ -115,7 +135,7 @@ export default function Settings() {
       await api.delete(`/channels/${id}`)
       setChannels(prev => prev.filter(c => c.id !== id))
     } catch (err) {
-      setChannelError(err.response?.data?.detail || 'Failed to disconnect channel')
+      setChannelError(errorMessage(err, 'Failed to disconnect channel'))
     }
   }
 
@@ -141,6 +161,7 @@ export default function Settings() {
           </p>
 
           {channelError && <div className="alert alert-error" style={{ marginBottom: 16 }}>{channelError}</div>}
+          {channelSuccess && <div className="alert alert-success" style={{ marginBottom: 16 }}>{channelSuccess}</div>}
 
           {channelsLoading ? (
             <span className="spinner" style={{ width: 24, height: 24 }} />

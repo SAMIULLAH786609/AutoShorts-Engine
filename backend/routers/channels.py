@@ -18,7 +18,13 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from backend.auth_service import decrypt_token, encrypt_token, get_current_user
+from backend.auth_service import (
+    create_access_token,
+    decode_access_token,
+    decrypt_token,
+    encrypt_token,
+    get_current_user,
+)
 from backend.config import (
     FRONTEND_URL,
     GOOGLE_CLIENT_ID,
@@ -77,7 +83,9 @@ def get_oauth_url(current_user: User = Depends(get_current_user)):
         "scope":         " ".join(SCOPES),
         "access_type":   "offline",
         "prompt":        "consent",
-        "state":         current_user.id,   # pass user_id through OAuth flow
+        # Signed, short-lived token carrying the user_id through the OAuth flow.
+        # A raw user_id here would let anyone attach a channel to another account.
+        "state":         create_access_token(current_user.id, expires_minutes=15),
     }
 
     url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -88,8 +96,8 @@ def get_oauth_url(current_user: User = Depends(get_current_user)):
 
 @router.get("/oauth-callback")
 def oauth_callback(
-    code:  str          = Query(...),
-    state: str          = Query(...),   # user_id
+    code:  str | None   = Query(None),
+    state: str | None   = Query(None),   # signed user_id token
     error: str | None   = Query(None),
     db:    Session      = Depends(get_db),
 ):
@@ -98,9 +106,15 @@ def oauth_callback(
     Exchanges code for tokens and saves the channel to the database.
     """
     if error:
-        return _redirect_to_frontend(f"/settings?error={error}")
+        return _redirect_to_frontend(f"/settings?{urlencode({'error': error})}")
 
-    user_id = state
+    if not code or not state:
+        return _redirect_to_frontend("/settings?error=missing_code")
+
+    user_id = decode_access_token(state)
+    if not user_id:
+        return _redirect_to_frontend("/settings?error=invalid_state")
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return _redirect_to_frontend("/settings?error=invalid_state")
@@ -108,8 +122,8 @@ def oauth_callback(
     # Exchange code for tokens
     try:
         token_data = _exchange_code(code)
-    except Exception as exc:
-        return _redirect_to_frontend(f"/settings?error=token_exchange_failed")
+    except Exception:
+        return _redirect_to_frontend("/settings?error=token_exchange_failed")
 
     access_token  = token_data.get("access_token",  "")
     refresh_token = token_data.get("refresh_token", "")
@@ -122,8 +136,13 @@ def oauth_callback(
     except Exception:
         channel_info = {}
 
-    channel_id   = channel_info.get("id",    "unknown")
-    channel_name = channel_info.get("title", "My Channel")
+    channel_id = channel_info.get("id", "")
+    if not channel_id:
+        # Without a real channel id we would store a broken "unknown" channel
+        # that every upload then fails against.
+        return _redirect_to_frontend("/settings?error=no_youtube_channel")
+
+    channel_name = channel_info.get("title") or "My Channel"
     channel_url  = f"https://youtube.com/channel/{channel_id}"
     thumb_url    = channel_info.get("thumbnail", "")
 

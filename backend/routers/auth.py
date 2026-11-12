@@ -46,7 +46,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
     """Create a new user account."""
-    existing = db.query(User).filter(User.email == body.email.lower()).first()
+    existing = db.query(User).filter(User.email == body.email.lower().strip()).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -89,7 +89,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate and return a JWT access token."""
-    user = db.query(User).filter(User.email == body.email.lower()).first()
+    user = db.query(User).filter(User.email == body.email.lower().strip()).first()
 
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(
@@ -162,7 +162,7 @@ def change_password(
 @router.post("/forgot-password")
 def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """Send a password reset email (if account exists)."""
-    user = db.query(User).filter(User.email == body.email.lower()).first()
+    user = db.query(User).filter(User.email == body.email.lower().strip()).first()
 
     # Always return 200 to prevent email enumeration attacks
     if not user:
@@ -189,7 +189,10 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
 
 @router.post("/reset-password")
 def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.reset_token == body.token).first()
+    user = (
+        db.query(User).filter(User.reset_token == body.token).first()
+        if body.token else None
+    )
 
     if not user:
         raise HTTPException(

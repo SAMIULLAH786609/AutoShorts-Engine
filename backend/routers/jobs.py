@@ -328,8 +328,10 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
         from backend.pipeline_runner import run_pipeline_for_user
         result = run_pipeline_for_user(user=user, channel=channel, db=db, job_id=job.id)
 
-        # Update job with results
+        # Update job with results (the video is already on YouTube, so it is
+        # recorded as complete even if the user pressed Stop at the very end)
         job.status           = "complete"
+        job.error_message    = None
         job.completed_at     = datetime.now(timezone.utc)
         job.topic            = result.get("topic", "")
         job.title            = result.get("title", "")
@@ -343,22 +345,36 @@ def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
 
     except Exception as exc:
         error_msg = str(exc)[:2000]
-        retry_count = 0
+        # Default to "give up" so that if we cannot even read the job back we
+        # never spin up an endless chain of retries.
+        retry_count = MAX_AUTO_RETRIES
+        cancelled   = False
 
         try:
+            # The failure may have come from the DB itself — the session must
+            # be rolled back before it can be used again.
+            db.rollback()
             job = db.query(VideoJob).filter(VideoJob.id == job_id).first()
             if job:
-                retry_count       = (job.retry_count or 0) + 1
-                job.status        = "failed"
-                job.completed_at  = datetime.now(timezone.utc)
-                job.error_message = f"[Attempt {retry_count}] {error_msg}"
-                job.retry_count   = retry_count
-                db.commit()
+                cancelled = (
+                    job.status == "failed"
+                    and "Cancelled" in (job.error_message or "")
+                )
+                if not cancelled:
+                    retry_count       = (job.retry_count or 0) + 1
+                    job.status        = "failed"
+                    job.completed_at  = datetime.now(timezone.utc)
+                    job.error_message = f"[Attempt {retry_count}] {error_msg}"
+                    job.retry_count   = retry_count
+                    db.commit()
         except Exception:
-            pass
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
-        # ── AUTO-RETRY ───────────────────────────────────────────
-        if retry_count < MAX_AUTO_RETRIES:
+        # ── AUTO-RETRY (never for jobs the user cancelled) ───────
+        if not cancelled and retry_count < MAX_AUTO_RETRIES:
             import logging as _logging
             _log = _logging.getLogger("autoshorts.jobs")
             _log.warning(
