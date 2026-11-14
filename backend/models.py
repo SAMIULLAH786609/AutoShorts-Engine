@@ -55,6 +55,9 @@ class User(Base):
     default_gender       = Column(String(10),  default="female")
     default_privacy      = Column(String(20),  default="private")
     videos_per_day       = Column(Integer,      default=3)
+    auto_delete_zero_views = Column(Boolean, default=False, nullable=False)
+    auto_delete_after_hours = Column(Integer, default=72, nullable=False)
+    auto_delete_enabled_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at           = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at           = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
@@ -107,7 +110,7 @@ class VideoJob(Base):
     user_id          = Column(String, ForeignKey("users.id",            ondelete="CASCADE"), nullable=False, index=True)
     channel_id       = Column(String, ForeignKey("youtube_channels.id", ondelete="SET NULL"), nullable=True)
 
-    # Status: pending | running | complete | failed
+    # Status: pending | running | uploading | complete | failed | deleted
     status           = Column(String(20), default="pending", nullable=False, index=True)
 
     # Content metadata
@@ -147,6 +150,8 @@ class VideoJob(Base):
     created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     started_at       = Column(DateTime(timezone=True), nullable=True)
     completed_at     = Column(DateTime(timezone=True), nullable=True)
+    youtube_deleted_at = Column(DateTime(timezone=True), nullable=True)
+    deletion_reason = Column(Text, nullable=True)
 
     user    = relationship("User",           back_populates="jobs")
     channel = relationship("YouTubeChannel", back_populates="jobs")

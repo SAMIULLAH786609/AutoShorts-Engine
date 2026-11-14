@@ -81,7 +81,7 @@ def _fetch_with_token(video_id: str, access_token: str) -> dict | None:
     """Call YouTube Data API using OAuth Bearer token."""
     resp = requests.get(
         YT_VIDEOS_URL,
-        params={"part": "statistics,status", "id": video_id},
+        params={"part": "statistics,status,snippet", "id": video_id},
         headers={"Authorization": f"Bearer {access_token}"},
         timeout=10,
     )
@@ -96,7 +96,7 @@ def _fetch_with_api_key(video_id: str, api_key: str) -> dict | None:
     """Call YouTube Data API using a server API key (works for public videos)."""
     resp = requests.get(
         YT_VIDEOS_URL,
-        params={"part": "statistics,status", "id": video_id, "key": api_key},
+        params={"part": "statistics,status,snippet", "id": video_id, "key": api_key},
         timeout=10,
     )
     resp.raise_for_status()
@@ -141,10 +141,12 @@ def _parse_stats(data: dict, video_id: str) -> dict | None:
 
     stats = items[0].get("statistics", {})
     return {
-        "views":    int(stats.get("viewCount",    0)),
+        "views":    int(stats["viewCount"]) if stats.get("viewCount") is not None else None,
         "likes":    int(stats.get("likeCount",    0)),
         "comments": int(stats.get("commentCount", 0)),
         "privacy":  str(items[0].get("status", {}).get("privacyStatus", "")),
+        "published_at": items[0].get("snippet", {}).get("publishedAt"),
+        "channel_id": items[0].get("snippet", {}).get("channelId"),
     }
 
 

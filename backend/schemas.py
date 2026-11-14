@@ -100,6 +100,9 @@ class UserResponse(BaseModel):
     default_gender:   Optional[str] = "female"
     default_privacy:  Optional[str] = "private"
     videos_per_day:   Optional[int] = 3
+    auto_delete_zero_views: bool = False
+    auto_delete_after_hours: int = 72
+    auto_delete_enabled_at: Optional[datetime] = None
     created_at:       datetime
 
     model_config = {"from_attributes": True}
@@ -112,6 +115,8 @@ class UpdateSettingsRequest(BaseModel):
     default_gender:   Optional[str] = None
     default_privacy:  Optional[str] = None
     videos_per_day:   Optional[int] = Field(None, ge=1, le=10)
+    auto_delete_zero_views: Optional[bool] = None
+    auto_delete_after_hours: Optional[int] = Field(None, ge=24, le=720)
 
     @field_validator("default_gender")
     @classmethod
@@ -166,6 +171,8 @@ class JobResponse(BaseModel):
     created_at:       datetime
     started_at:       Optional[datetime]
     completed_at:     Optional[datetime]
+    youtube_deleted_at: Optional[datetime] = None
+    deletion_reason: Optional[str] = None
     # YouTube live stats
     yt_views:         Optional[int] = 0
     yt_likes:         Optional[int] = 0
@@ -223,6 +230,7 @@ class DashboardStats(BaseModel):
     uploaded_videos:  int
     failed_videos:    int
     pending_videos:   int
+    deleted_videos:   int = 0
     next_scheduled:   Optional[str]
     channel_connected: bool
     recent_jobs:      list[JobResponse]

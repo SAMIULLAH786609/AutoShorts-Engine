@@ -17,7 +17,9 @@ export default function Settings() {
     channel_niche: '',
     default_language: '',
     default_gender: '',
-    default_privacy: ''
+    default_privacy: '',
+    auto_delete_zero_views: false,
+    auto_delete_after_hours: 72,
   })
   
   const [passwordForm, setPasswordForm] = useState({
@@ -42,7 +44,9 @@ export default function Settings() {
         channel_niche:    user.channel_niche || '',
         default_language: user.default_language || '',
         default_gender:   user.default_gender || '',
-        default_privacy:  user.default_privacy || ''
+        default_privacy:  user.default_privacy || '',
+        auto_delete_zero_views: user.auto_delete_zero_views ?? false,
+        auto_delete_after_hours: user.auto_delete_after_hours ?? 72,
       })
     }
   }, [user])
@@ -139,7 +143,10 @@ export default function Settings() {
     }
   }
 
-  const setSettingVal = key => e => setSettings(s => ({ ...s, [key]: e.target.value }))
+  const setSettingVal = key => e => setSettings(s => ({
+    ...s, [key]: e.target.type === 'checkbox' ? e.target.checked
+      : e.target.type === 'number' ? Number(e.target.value) : e.target.value,
+  }))
   const setPwVal = key => e => setPasswordForm(p => ({ ...p, [key]: e.target.value }))
 
   return (
@@ -244,6 +251,26 @@ export default function Settings() {
                 <option value="unlisted">Unlisted</option>
               </select>
             </div>
+
+            <fieldset style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <legend style={{ padding: '0 6px', fontWeight: 600 }}>Zero-view video removal</legend>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input type="checkbox" checked={settings.auto_delete_zero_views}
+                  onChange={setSettingVal('auto_delete_zero_views')} />
+                Automatically remove public videos that stay at zero views
+              </label>
+              <div className="form-group">
+                <label className="form-label" htmlFor="auto-delete-hours">Waiting time (hours)</label>
+                <input id="auto-delete-hours" className="form-input" type="number" min={24} max={720}
+                  value={settings.auto_delete_after_hours} disabled={!settings.auto_delete_zero_views}
+                  onChange={setSettingVal('auto_delete_after_hours')} required />
+              </div>
+              <p className="form-hint">
+                Checks run hourly. Only uploads completed after you enable this setting are eligible.
+                Private and unlisted videos, videos with any views, and videos with unavailable stats are kept.
+                Removal from YouTube is permanent; the record stays in Video History.
+              </p>
+            </fieldset>
 
             <button type="submit" className="btn btn-primary" disabled={savingSettings} style={{ alignSelf: 'flex-start', marginTop: 8 }}>
               {savingSettings ? <><span className="spinner" />Saving Preferences…</> : 'Save Preferences'}

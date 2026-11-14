@@ -8,6 +8,7 @@ const STATUS_BADGE = {
   failed:   <span className="badge badge-error">✗ Failed</span>,
   running:  <span className="badge badge-warning">⟳ Generating</span>,
   uploading: <span className="badge badge-info">↑ Uploading</span>,
+  deleted: <span className="badge badge-warning">Removed from YouTube</span>,
   pending:  <span className="badge badge-info">◷ Pending</span>,
 }
 
@@ -130,6 +131,7 @@ export default function Dashboard() {
     { icon: '✅', label: 'Uploaded',         value: stats?.uploaded_videos ?? 0, color: 'var(--green)',   bg: 'rgba(34,197,94,0.12)'  },
     { icon: '❌', label: 'Failed',           value: stats?.failed_videos   ?? 0, color: 'var(--red)',     bg: 'rgba(239,68,68,0.12)'  },
     { icon: '⏳', label: 'In Progress',     value: stats?.pending_videos  ?? 0, color: 'var(--yellow)',  bg: 'rgba(245,158,11,0.12)' },
+    { icon: '🗑️', label: 'Auto-removed', value: stats?.deleted_videos ?? 0, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' },
   ]
 
   return (
@@ -228,7 +230,7 @@ export default function Dashboard() {
                     <td>{STATUS_BADGE[job.status] ?? <span className="badge">{job.status}</span>}</td>
                     <td><span style={{fontSize:12,color:'var(--text-secondary)',textTransform:'capitalize'}}>{job.trigger}</span></td>
                     <td>
-                      {job.youtube_url
+                      {job.youtube_url && job.status !== 'deleted'
                         ? <a href={job.youtube_url} target="_blank" rel="noreferrer"
                             style={{color:'var(--link)', textDecoration:'none', fontSize:13}}>
                             View ↗

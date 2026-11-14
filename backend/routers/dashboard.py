@@ -29,6 +29,7 @@ def get_dashboard(
     uploaded = jobs.filter(VideoJob.status == "complete").count()
     failed   = jobs.filter(VideoJob.status == "failed").count()
     pending  = jobs.filter(VideoJob.status.in_(["pending", "running", "uploading"])).count()
+    deleted  = jobs.filter(VideoJob.status == "deleted").count()
 
     channel_connected = (
         db.query(YouTubeChannel)
@@ -68,6 +69,7 @@ def get_dashboard(
         uploaded_videos   = uploaded,
         failed_videos     = failed,
         pending_videos    = pending,
+        deleted_videos    = deleted,
         next_scheduled    = next_scheduled,
         channel_connected = channel_connected,
         recent_jobs       = [JobResponse.model_validate(j) for j in recent],

@@ -84,7 +84,12 @@ def start_scheduler() -> None:
         max_instances    = 1,
     )
 
-    # Published videos are retained. Zero views is not a reason to delete an upload.
+    # Only explicitly opted-in accounts are eligible for zero-view removal.
+    _scheduler.add_job(
+        _auto_delete_zero_view_videos,
+        trigger=CronTrigger(minute=15, timezone="UTC"),
+        id="auto_delete_zero_views", replace_existing=True, max_instances=1,
+    )
 
     # Every hour: pull fresh views/likes/comments for all uploaded Shorts from YouTube API
     _scheduler.add_job(
@@ -412,132 +417,98 @@ def _refresh_all_shorts_stats() -> None:
 
 # ── Auto-Delete Zero-View Videos ──────────────────────────────────────────────
 
-# Videos must be at least this many hours old before we check them
-AUTO_DELETE_AFTER_HOURS = 48   # 2 days
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
-# Delete if views are strictly less than this number (0 = only delete with zero views)
-AUTO_DELETE_VIEW_THRESHOLD = 0
+
+def _zero_view_delete_eligible(job, user, channel, stats: dict, now: datetime) -> bool:
+    """Require explicit consent, a new upload, and complete fresh public stats."""
+    if not user.is_active or not user.auto_delete_zero_views or not user.auto_delete_enabled_at:
+        return False
+    if job.status != "complete" or not job.youtube_video_id or not job.completed_at:
+        return False
+    if not channel.is_connected or channel.user_id != user.id or job.user_id != user.id:
+        return False
+    if stats.get("channel_id") != channel.channel_id:
+        return False
+    # Missing/unavailable counts are unknown, never zero.
+    if stats.get("privacy") != "public" or type(stats.get("views")) is not int or stats["views"] != 0:
+        return False
+    hours = user.auto_delete_after_hours
+    if not isinstance(hours, int) or not 24 <= hours <= 720:
+        return False
+    cutoff = _utc(now) - timedelta(hours=hours)
+    if _utc(job.completed_at) < _utc(user.auto_delete_enabled_at) or _utc(job.completed_at) > cutoff:
+        return False
+    try:
+        published = datetime.fromisoformat(stats["published_at"].replace("Z", "+00:00"))
+        if published.tzinfo is None:
+            return False
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return False
+    # A video made public recently gets the full waiting period, too.
+    return _utc(published) <= cutoff
 
 
 def _auto_delete_zero_view_videos() -> None:
-    """
-    Daily job (UTC 00:00).
-
-    For every completed video job where:
-      - youtube_video_id is set  (it was uploaded to YouTube)
-      - completed_at is >= 48 hours ago
-      - the video is PUBLIC (private/unlisted videos are always kept)
-      - fresh view count == 0
-
-    → Delete the video from YouTube
-    → Delete the VideoJob record from DB
-    """
+    """Hourly check of opted-in users; retain an audit row after remote removal."""
     from backend.database import SessionLocal
-    from backend.models import VideoJob, YouTubeChannel
+    from backend.models import User, VideoJob, YouTubeChannel
     from backend.youtube_stats import fetch_video_stats, delete_youtube_video
 
-    log.info("AUTO-DELETE: Starting daily zero-view video cleanup...")
-
     db = SessionLocal()
-    deleted_count = 0
-    skipped_count = 0
-    error_count   = 0
-
+    removed = 0
     try:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_DELETE_AFTER_HOURS)
-
-        # Find candidates: completed uploads older than 48 hours
-        candidates = (
-            db.query(VideoJob)
-            .filter(
-                VideoJob.status           == "complete",
-                VideoJob.youtube_video_id != None,
-                VideoJob.youtube_video_id != "",
-                VideoJob.completed_at     <= cutoff,
-            )
-            .all()
-        )
-
-        log.info("AUTO-DELETE: Found %d candidate video(s) to check.", len(candidates))
-
-        for job in candidates:
-            video_id = job.youtube_video_id
-
-            # Get the channel to fetch stats / delete
-            channel = (
-                db.query(YouTubeChannel)
-                .filter(YouTubeChannel.id == job.channel_id)
-                .first()
-            )
-            if not channel:
-                log.warning(
-                    "AUTO-DELETE: Skipping job %s (video %s) — channel not found.",
-                    job.id[:8], video_id,
-                )
-                skipped_count += 1
-                continue
-
-            # --- Fresh stats check ---
+        # Only process uploads completed after the user enabled the rule.
+        candidates = [row[0] for row in db.query(VideoJob.id).join(User, User.id == VideoJob.user_id).filter(
+            User.is_active == True, User.auto_delete_zero_views == True,
+            User.auto_delete_enabled_at != None,
+            VideoJob.status == "complete", VideoJob.youtube_video_id != None,
+            VideoJob.youtube_video_id != "",
+            VideoJob.completed_at >= User.auto_delete_enabled_at,
+            VideoJob.completed_at <= datetime.now(timezone.utc) - timedelta(hours=24),
+        ).order_by(VideoJob.completed_at).all()]
+        db.rollback()
+        for job_id in candidates:
             try:
-                stats = fetch_video_stats(channel=channel, video_id=video_id)
-                views = stats.get("views", 0)
-            except Exception as exc:
-                log.warning(
-                    "AUTO-DELETE: Could not fetch stats for video %s (job %s): %s. Skipping.",
-                    video_id, job.id[:8], exc,
-                )
-                skipped_count += 1
-                continue
-
-            # Private / unlisted videos never get views — only judge public ones.
-            privacy = stats.get("privacy", "")
-            if privacy != "public":
-                log.info(
-                    "AUTO-DELETE: Keeping video %s (job %s) — privacy is '%s', not public.",
-                    video_id, job.id[:8], privacy or "unknown",
-                )
-                skipped_count += 1
-                continue
-
-            if views > AUTO_DELETE_VIEW_THRESHOLD:
-                log.info(
-                    "AUTO-DELETE: Keeping video %s (job %s) — has %d view(s).",
-                    video_id, job.id[:8], views,
-                )
-                skipped_count += 1
-                continue
-
-            # --- Views == 0: delete from YouTube then DB ---
-            log.info(
-                "AUTO-DELETE: Video %s (job %s) has 0 views after %dh — deleting...",
-                video_id, job.id[:8], AUTO_DELETE_AFTER_HOURS,
-            )
-
-            yt_deleted = delete_youtube_video(channel=channel, video_id=video_id)
-
-            if yt_deleted:
-                db.delete(job)
-                db.commit()
-                deleted_count += 1
-                log.info(
-                    "AUTO-DELETE: ✓ Deleted YouTube video %s and removed DB record (job %s).",
-                    video_id, job.id[:8],
-                )
-            else:
-                error_count += 1
-                log.error(
-                    "AUTO-DELETE: ✗ YouTube deletion failed for video %s (job %s). DB record kept.",
-                    video_id, job.id[:8],
-                )
-
-    except Exception as exc:
-        log.exception("AUTO-DELETE: Unexpected error during cleanup: %s", exc)
-
+                # Independent workers cannot remove the same job concurrently.
+                with db.begin():
+                    job = db.query(VideoJob).filter(VideoJob.id == job_id).with_for_update(skip_locked=True).first()
+                    if not job or job.status != "complete":
+                        continue
+                    user = db.query(User).filter(User.id == job.user_id).with_for_update().first()
+                    channel = db.query(YouTubeChannel).filter(
+                        YouTubeChannel.id == job.channel_id,
+                        YouTubeChannel.user_id == job.user_id,
+                        YouTubeChannel.is_connected == True,
+                    ).first()
+                    if not user or not channel or not user.auto_delete_zero_views:
+                        continue
+                    now = datetime.now(timezone.utc)
+                    if not user.auto_delete_enabled_at or not job.completed_at:
+                        continue
+                    if _utc(job.completed_at) > now - timedelta(hours=user.auto_delete_after_hours):
+                        continue
+                    stats = fetch_video_stats(channel=channel, video_id=job.youtube_video_id)
+                    if not _zero_view_delete_eligible(job, user, channel, stats, now):
+                        continue
+                    if not delete_youtube_video(channel=channel, video_id=job.youtube_video_id):
+                        log.warning("Zero-view removal failed for job %s; retained for a later check", job_id)
+                        continue
+                    job.status = "deleted"
+                    job.youtube_deleted_at = now
+                    job.deletion_reason = f"Automatically removed: 0 views after {user.auto_delete_after_hours} hours."
+                    job.yt_views = 0
+                    job.yt_stats_updated = now
+                    job.error_message = None
+                    removed += 1
+                    log.info("YouTube confirmed zero-view removal for job %s", job_id)
+            except Exception:
+                db.rollback()
+                log.exception("Zero-view check failed for job %s; no further action this tick", job_id)
+    except Exception:
+        db.rollback()
+        log.exception("Zero-view cleanup check failed")
     finally:
         db.close()
-
-    log.info(
-        "AUTO-DELETE: Done — deleted=%d, skipped=%d, errors=%d.",
-        deleted_count, skipped_count, error_count,
-    )
-
+    log.info("Zero-view check finished: %d videos removed", removed)

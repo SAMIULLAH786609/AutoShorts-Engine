@@ -7,6 +7,7 @@ const STATUS_BADGE = {
   failed:   <span className="badge badge-error">✗ Failed</span>,
   running:  <span className="badge badge-warning">⟳ Generating</span>,
   uploading: <span className="badge badge-info">↑ Uploading</span>,
+  deleted: <span className="badge badge-warning">Removed from YouTube</span>,
   pending:  <span className="badge badge-info">◷ Pending</span>,
 }
 
@@ -148,10 +149,16 @@ export default function VideoHistory() {
                             Error: {job.error_message}
                           </div>
                         )}
+                        {job.deletion_reason && (
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                            {job.deletion_reason}
+                            {job.youtube_deleted_at && ` ${new Date(job.youtube_deleted_at).toLocaleString()}`}
+                          </div>
+                        )}
                       </td>
                       <td>{STATUS_BADGE[job.status] || <span className="badge">{job.status}</span>}</td>
                       <td>
-                        {job.youtube_url ? (
+                        {job.status === 'deleted' ? <span style={{ color: 'var(--text-muted)' }}>Removed automatically</span> : job.youtube_url ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                             <a href={job.youtube_url} target="_blank" rel="noreferrer" style={{ color: 'var(--link)', textDecoration: 'none', fontWeight: 500 }}>
                               Watch Short ↗

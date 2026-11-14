@@ -24,7 +24,7 @@ from backend.auth_service import create_access_token, decode_access_token
 from backend.database import Base
 from backend.models import User, VideoJob, YouTubeChannel
 from backend.routers import jobs
-from backend.scheduler import _compute_slots
+from backend.scheduler import _compute_slots, _zero_view_delete_eligible, _auto_delete_zero_view_videos
 
 
 class GenerationTests(unittest.TestCase):
@@ -196,6 +196,160 @@ class UploadFlowTests(unittest.TestCase):
         self.db.refresh(self.job)
         self.assertEqual(self.job.status, "failed")
         self.assertIn("Check your channel", self.job.error_message)
+
+
+class ZeroViewRemovalTests(unittest.TestCase):
+    def setUp(self):
+        self.now = datetime.now(timezone.utc)
+        self.user = SimpleNamespace(id="owner", is_active=True, auto_delete_zero_views=True,
+                                    auto_delete_after_hours=72,
+                                    auto_delete_enabled_at=self.now - timedelta(hours=100))
+        self.channel = SimpleNamespace(channel_id="channel", user_id="owner", is_connected=True)
+        self.job = SimpleNamespace(status="complete", youtube_video_id="video", user_id="owner",
+                                   completed_at=self.now - timedelta(hours=80))
+        self.stats = {"privacy": "public", "views": 0, "channel_id": "channel",
+                      "published_at": (self.now - timedelta(hours=80)).isoformat()}
+
+    def eligible(self):
+        return _zero_view_delete_eligible(self.job, self.user, self.channel, self.stats, self.now)
+
+    def test_zero_view_public_video_after_72_hours_is_eligible(self):
+        self.assertTrue(self.eligible())
+
+    def test_video_with_one_view_is_kept(self):
+        self.stats["views"] = 1
+        self.assertFalse(self.eligible())
+
+    def test_unknown_counts_are_never_treated_as_zero(self):
+        for views in (None, "0", False, -1):
+            with self.subTest(views=views):
+                self.stats["views"] = views
+                self.assertFalse(self.eligible())
+        self.stats.pop("views")
+        self.assertFalse(self.eligible())
+
+    def test_private_unlisted_and_unknown_privacy_are_kept(self):
+        for privacy in ("private", "unlisted", ""):
+            with self.subTest(privacy=privacy):
+                self.stats["privacy"] = privacy
+                self.assertFalse(self.eligible())
+
+    def test_recent_upload_and_recent_publication_are_kept(self):
+        self.job.completed_at = self.now - timedelta(hours=71)
+        self.assertFalse(self.eligible())
+        self.job.completed_at = self.now - timedelta(hours=80)
+        self.stats["published_at"] = (self.now - timedelta(hours=1)).isoformat()
+        self.assertFalse(self.eligible())
+
+    def test_missing_publication_time_is_kept(self):
+        self.stats.pop("published_at")
+        self.assertFalse(self.eligible())
+
+    def test_uploads_before_enabling_are_kept(self):
+        self.user.auto_delete_enabled_at = self.now - timedelta(hours=1)
+        self.assertFalse(self.eligible())
+
+    def test_disabled_rule_and_disconnected_channels_are_kept(self):
+        self.user.auto_delete_zero_views = False
+        self.assertFalse(self.eligible())
+        self.user.auto_delete_zero_views = True
+        self.channel.is_connected = False
+        self.assertFalse(self.eligible())
+
+    def test_other_channels_and_users_are_kept(self):
+        self.stats["channel_id"] = "someone-else"
+        self.assertFalse(self.eligible())
+        self.stats["channel_id"] = "channel"
+        self.channel.user_id = "someone-else"
+        self.assertFalse(self.eligible())
+
+    def test_youtube_missing_statistics_stays_unknown(self):
+        from backend.youtube_stats import _parse_stats
+        stats = _parse_stats({"items": [{"statistics": {}, "status": {"privacyStatus": "public"}}]}, "video")
+        self.assertIsNone(stats["views"])
+
+
+class ZeroViewWorkerTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite://", poolclass=StaticPool)
+        Base.metadata.create_all(self.engine)
+        self.sessions = sessionmaker(bind=self.engine)
+        self.db = self.sessions()
+        now = datetime.now(timezone.utc)
+        self.user = User(email="removal@example.com", name="Owner", password_hash="unused",
+                         auto_delete_zero_views=True, auto_delete_after_hours=72,
+                         auto_delete_enabled_at=now - timedelta(hours=100))
+        self.db.add(self.user)
+        self.db.flush()
+        self.channel = YouTubeChannel(user_id=self.user.id, channel_id="my-channel", is_connected=True)
+        self.db.add(self.channel)
+        self.db.flush()
+        self.job = VideoJob(user_id=self.user.id, channel_id=self.channel.id, status="complete",
+                            youtube_video_id="remote-id", completed_at=now - timedelta(hours=80))
+        self.db.add(self.job)
+        self.db.commit()
+        self.job_id = self.job.id
+        self.stack = ExitStack()
+        self.stack.enter_context(patch("backend.database.SessionLocal", self.sessions))
+        self.fetch = self.stack.enter_context(patch("backend.youtube_stats.fetch_video_stats", return_value={
+            "views": 0, "privacy": "public", "channel_id": "my-channel",
+            "published_at": (now - timedelta(hours=80)).isoformat(),
+        }))
+        self.delete = self.stack.enter_context(patch("backend.youtube_stats.delete_youtube_video", return_value=True))
+
+    def tearDown(self):
+        self.stack.close()
+        self.db.close()
+        self.engine.dispose()
+
+    def test_removal_retains_audit_history_and_is_not_repeated(self):
+        _auto_delete_zero_view_videos()
+        self.db.refresh(self.job)
+        self.assertEqual(self.job.status, "deleted")
+        self.assertEqual(self.job.youtube_video_id, "remote-id")
+        self.assertIsNotNone(self.job.youtube_deleted_at)
+        self.assertIn("72 hours", self.job.deletion_reason)
+        _auto_delete_zero_view_videos()
+        self.delete.assert_called_once()
+
+    def test_disabled_user_is_never_checked_or_deleted(self):
+        self.user.auto_delete_zero_views = False
+        self.db.commit()
+        _auto_delete_zero_view_videos()
+        self.fetch.assert_not_called()
+        self.delete.assert_not_called()
+
+    def test_old_uploads_are_not_checked_or_deleted(self):
+        self.user.auto_delete_enabled_at = datetime.now(timezone.utc)
+        self.db.commit()
+        _auto_delete_zero_view_videos()
+        self.fetch.assert_not_called()
+        self.delete.assert_not_called()
+
+    def test_stats_failure_preserves_video(self):
+        self.fetch.side_effect = RuntimeError("YouTube unavailable")
+        _auto_delete_zero_view_videos()
+        self.delete.assert_not_called()
+        self.db.refresh(self.job)
+        self.assertEqual(self.job.status, "complete")
+
+    def test_remote_failure_preserves_record_for_later_check(self):
+        self.delete.return_value = False
+        _auto_delete_zero_view_videos()
+        self.db.refresh(self.job)
+        self.assertEqual(self.job.status, "complete")
+        self.assertIsNone(self.job.youtube_deleted_at)
+
+    def test_setting_enable_records_scope_start_and_disable_stops_rule(self):
+        from backend.routers.auth import update_me
+        from backend.schemas import UpdateSettingsRequest
+        self.user.auto_delete_zero_views = False
+        self.db.commit()
+        old_start = self.user.auto_delete_enabled_at
+        update_me(UpdateSettingsRequest(auto_delete_zero_views=True, auto_delete_after_hours=72), self.db, self.user)
+        self.assertGreater(self.user.auto_delete_enabled_at.replace(tzinfo=timezone.utc), old_start.replace(tzinfo=timezone.utc))
+        update_me(UpdateSettingsRequest(auto_delete_zero_views=False), self.db, self.user)
+        self.assertFalse(self.user.auto_delete_zero_views)
 
 
 class YouTubeRequestTests(unittest.TestCase):

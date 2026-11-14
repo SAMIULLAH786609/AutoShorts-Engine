@@ -45,6 +45,11 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE user_schedules ADD COLUMN IF NOT EXISTS end_time   VARCHAR(5) DEFAULT '23:00'",
                 "ALTER TABLE user_schedules ADD COLUMN IF NOT EXISTS long_video_enabled BOOLEAN DEFAULT TRUE",
                 "ALTER TABLE user_schedules ADD COLUMN IF NOT EXISTS long_video_time VARCHAR(5) DEFAULT '13:00'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_delete_zero_views BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_delete_after_hours INTEGER NOT NULL DEFAULT 72",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_delete_enabled_at TIMESTAMP WITH TIME ZONE",
+                "ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS youtube_deleted_at TIMESTAMP WITH TIME ZONE",
+                "ALTER TABLE video_jobs ADD COLUMN IF NOT EXISTS deletion_reason TEXT",
             ]
             for sql in migrations:
                 conn.execute(__import__("sqlalchemy").text(sql))

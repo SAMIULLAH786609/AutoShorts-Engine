@@ -132,6 +132,12 @@ def update_me(
     if body.default_gender  is not None: current_user.default_gender   = body.default_gender
     if body.default_privacy is not None: current_user.default_privacy  = body.default_privacy
     if body.videos_per_day  is not None: current_user.videos_per_day   = body.videos_per_day
+    if body.auto_delete_after_hours is not None:
+        current_user.auto_delete_after_hours = body.auto_delete_after_hours
+    if body.auto_delete_zero_views is not None:
+        if body.auto_delete_zero_views and not current_user.auto_delete_zero_views:
+            current_user.auto_delete_enabled_at = datetime.now(timezone.utc)
+        current_user.auto_delete_zero_views = body.auto_delete_zero_views
 
     db.commit()
     db.refresh(current_user)
