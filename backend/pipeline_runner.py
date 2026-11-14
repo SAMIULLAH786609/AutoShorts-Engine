@@ -78,8 +78,7 @@ def _upload_to_cloudinary(file_path: Path, resource_type: str = "video") -> str:
     )
 
     if not CLOUDINARY_CLOUD_NAME:
-        # No Cloudinary configured — return local path as fallback
-        return str(file_path)
+        return ""
 
     import cloudinary
     import cloudinary.uploader
@@ -96,7 +95,7 @@ def _upload_to_cloudinary(file_path: Path, resource_type: str = "video") -> str:
         resource_type = resource_type,
         folder        = "autoshorts",
     )
-    return result.get("secure_url", str(file_path))
+    return result.get("secure_url", "")
 
 
 def run_pipeline_for_user(
@@ -130,20 +129,16 @@ def run_pipeline_for_user(
         try:
             from backend.models import VideoJob as _VJ
             j = _tmp.query(_VJ).filter(_VJ.id == job_id).first()
-            if j and j.status == "failed" and "Cancelled" in (j.error_message or ""):
+            if not j or (j.status == "failed" and "Cancelled" in (j.error_message or "")):
                 raise RuntimeError("Cancelled by user")
         finally:
             _tmp.close()
 
-    # ── Override pipeline config with user preferences ───────
-    os.environ["CHANNEL_NICHE"]    = user.channel_niche or "Interesting facts and viral stories"
-    os.environ["DEFAULT_LANGUAGE"] = user.default_language or "English"
-    os.environ["DEFAULT_GENDER"]   = user.default_gender or "female"
-
     # Use user-specific temp directory to avoid conflicts between users
-    user_dir    = PROJECT_ROOT / "downloads" / user.id
-    output_dir  = PROJECT_ROOT / "output"    / user.id
-    thumb_dir   = PROJECT_ROOT / "thumbnails"/ user.id
+    run_id = job_id or __import__("uuid").uuid4().hex
+    user_dir    = PROJECT_ROOT / "downloads" / user.id / run_id
+    output_dir  = PROJECT_ROOT / "output"    / user.id / run_id
+    thumb_dir   = PROJECT_ROOT / "thumbnails"/ user.id / run_id
     user_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     thumb_dir.mkdir(parents=True, exist_ok=True)
@@ -193,7 +188,11 @@ def run_pipeline_for_user(
 
         # ── Step 4: Generate video plan ───────────────────────────
         check_cancelled()
-        plan = generate_video_plan(topic=topic, style=style, research_summary=research)
+        plan = generate_video_plan(
+            topic=topic, style=style, research_summary=research,
+            niche=user.channel_niche or "Interesting facts and viral stories",
+            language=user.default_language or "English", gender=user.default_gender or "female",
+        )
 
         # ── Step 5: Generate voice ────────────────────────────────
         check_cancelled()
@@ -204,7 +203,7 @@ def run_pipeline_for_user(
         generate_voice(
             text        = plan.script,
             output_path = audio_path,
-            voice       = plan.voice,
+            voice       = None,
             language    = user.default_language or "English",
             gender      = user.default_gender   or "female",
             style       = plan.style,
@@ -249,25 +248,54 @@ def run_pipeline_for_user(
         try:
             video_url = _upload_to_cloudinary(video_path, resource_type="video")
         except Exception as exc:
-            video_url = str(video_path)  # fallback to local
+            log.warning("Cloud storage unavailable; YouTube upload will continue (%s)", type(exc).__name__)
+            video_url = ""
 
         try:
             if thumb_path and thumb_path.exists():
                 thumb_url = _upload_to_cloudinary(thumb_path, resource_type="image")
         except Exception:
-            thumb_url = str(thumb_path) if thumb_path else ""
+            thumb_url = ""
 
         # ── Step 10: Upload to YouTube ────────────────────────────
+        check_cancelled()
+        if job_id:
+            # Atomically claim the upload boundary; cancellation must win if it
+            # was committed first. Never blindly retry an uncertain upload.
+            claimed = db.query(VideoJob).filter(
+                VideoJob.id == job_id, VideoJob.status == "running",
+            ).update({
+                "status": "uploading", "topic": topic, "title": plan.title,
+                "style": style, "script": plan.script,
+                "video_url": video_url, "thumbnail_url": thumb_url,
+                "local_video_path": str(video_path),
+            }, synchronize_session=False)
+            db.commit()
+            if not claimed:
+                raise RuntimeError("Cancelled by user")
         youtube_video_id = _upload_to_youtube(
             plan     = plan,
             video_path = video_path,
             channel  = channel,
             privacy  = user.default_privacy or "private",
             db       = db,
+            language = user.default_language or "English",
         )
+        if job_id:
+            db.query(VideoJob).filter(VideoJob.id == job_id).update({
+                "youtube_video_id": youtube_video_id,
+                "youtube_url": f"https://youtu.be/{youtube_video_id}",
+                "status": "complete", "completed_at": datetime.now(timezone.utc),
+                "error_message": None,
+            }, synchronize_session=False)
+            db.commit()
 
         # ── Step 11: Save used topic ──────────────────────────────
-        _save_used_topic(user.id, topic, db)
+        try:
+            _save_used_topic(user.id, topic, db)
+        except Exception:
+            db.rollback()
+            log.exception("Video uploaded, but topic history could not be saved for job %s", job_id)
 
         # ── Duration ──────────────────────────────────────────────
         try:
@@ -332,6 +360,7 @@ def _upload_to_youtube(
     channel:    YouTubeChannel,
     privacy:    str,
     db:         Session,
+    language:   str = "English",
 ) -> str:
     """Upload the rendered video to the user's YouTube channel."""
     from backend.auth_service import decrypt_token
@@ -341,14 +370,19 @@ def _upload_to_youtube(
     from googleapiclient.http import MediaFileUpload
     from backend.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
-    # Refresh tokens if possible to ensure token validity
-    access_token = ""
-    try:
-        access_token = refresh_channel_tokens(channel, db)
-    except Exception:
-        access_token = decrypt_token(channel.access_token_enc or "")
-
+    access_token = decrypt_token(channel.access_token_enc or "")
     refresh_token = decrypt_token(channel.refresh_token_enc or "")
+    expiry = channel.token_expires_at
+    if expiry and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    if not access_token or not expiry or expiry <= datetime.now(timezone.utc):
+        if refresh_token:
+            try:
+                access_token = refresh_channel_tokens(channel, db)
+            except Exception as exc:
+                raise RuntimeError("YouTube authorization expired or refresh failed. Reconnect the channel in Settings.") from exc
+        elif not access_token:
+            raise RuntimeError("No YouTube authorization available. Reconnect the channel in Settings.")
 
     if not access_token and not refresh_token:
         raise RuntimeError("YouTube channel has no valid tokens. User must reconnect.")
@@ -371,9 +405,7 @@ def _upload_to_youtube(
     description = plan.description
     hashtag_str = " ".join(f"#{t.lstrip('#')}" for t in plan.hashtags if t.strip())
 
-    # CRITICAL FOR SHORTS FEED:
-    # 1. Title MUST have #Shorts or YouTube treats it as a regular video (shows in search instead of feed).
-    # 2. #Shorts tags MUST be at the VERY TOP of description for the Shorts classifier.
+    # Keep a descriptive Shorts label; classification also depends on the media.
     title = plan.title.strip()
     if "#shorts" not in title.lower():
         # Keep total title under 100 characters while ensuring #Shorts tag is present
@@ -388,6 +420,10 @@ def _upload_to_youtube(
     guaranteed_tags = ["Shorts", "Short", "YouTubeShorts", "shorts feed", "viral", "trending", "fyp", "explore"]
     plan_tags = [t.strip().lstrip("#") for t in plan.hashtags if t.strip()]
     all_tags  = list(dict.fromkeys(guaranteed_tags + plan_tags))[:30]  # dedupe + cap
+    all_tags = [tag[:60] for tag in all_tags]
+    while sum(len(tag) + 3 for tag in all_tags) > 450:
+        all_tags.pop()
+    language_code = {"english": "en", "urdu": "ur", "hindi": "hi", "spanish": "es", "french": "fr", "german": "de"}.get(language.lower(), "en")
 
     request_body = {
         "snippet": {
@@ -395,12 +431,11 @@ def _upload_to_youtube(
             "description":     full_description[:5000],
             "tags":            all_tags,
             "categoryId":      "27",   # 27 = Education / Facts
-            "defaultLanguage": "en",
+            "defaultLanguage": language_code,
         },
         "status": {
             "privacyStatus":             privacy,
             "selfDeclaredMadeForKids":   False,   # Required for Shorts feed algorithm & monetization
-            "madeForKids":               False,
         },
     }
 
@@ -418,7 +453,7 @@ def _upload_to_youtube(
 
     response = None
     while response is None:
-        status, response = request.next_chunk()
+        status, response = request.next_chunk(num_retries=3)
 
     return response["id"]
 

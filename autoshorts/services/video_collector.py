@@ -191,10 +191,19 @@ def _download_file(url: str, output_path: Path) -> None:
     """Stream-download a file to disk."""
     with requests.get(url, stream=True, timeout=120) as resp:
         resp.raise_for_status()
+        size_limit = 100 * 1024 * 1024
+        if int(resp.headers.get("Content-Length", "0")) > size_limit:
+            raise RuntimeError("Stock clip exceeds the 100 MB download limit")
+        total = 0
         with output_path.open("wb") as fh:
             for chunk in resp.iter_content(chunk_size=1024 * 1024):
                 if chunk:
+                    total += len(chunk)
+                    if total > size_limit:
+                        raise RuntimeError("Stock clip exceeds the 100 MB download limit")
                     fh.write(chunk)
+        if not total:
+            raise RuntimeError("Stock provider returned an empty clip")
 
 
 # ---------------------------------------------------------------------------
@@ -226,36 +235,22 @@ def collect_scene_videos(
     for index, query in enumerate(keywords, start=1):
         log.info("Scene %d/%d: searching for '%s'", index, len(keywords), query)
 
-        video_url: str | None = None
-
-        # Try Pexels (with random page)
-        video_url = search_pexels(query)
-
-        # Fallback to Pixabay
-        if not video_url:
-            video_url = search_pixabay(query)
-
-        if not video_url:
-            log.warning("No video found for scene %d: '%s' — skipping", index, query)
-            continue
-
         # Unique filename: scene index + random suffix so files are never confused
         rand_suffix = uuid.uuid4().hex[:6]
         output_path = dest / f"scene_{index:02d}_{rand_suffix}.mp4"
 
-        try:
-            _download_file(video_url, output_path)
-            paths.append(output_path)
-            log.info(
-                "Scene %d downloaded: %s (%.1f MB)",
-                index,
-                output_path.name,
-                output_path.stat().st_size / (1024 * 1024),
-            )
-            # Small delay between downloads to be polite to APIs
-            time.sleep(0.3)
-        except Exception as exc:
-            log.error("Download failed for scene %d '%s': %s", index, query, exc)
+        for source_name, source in (("Pexels", search_pexels), ("Pixabay", search_pixabay)):
+            try:
+                video_url = source(query)
+                if not video_url:
+                    continue
+                _download_file(video_url, output_path)
+                paths.append(output_path)
+                log.info("Scene %d downloaded via %s: %s", index, source_name, output_path.name)
+                break
+            except Exception as exc:
+                output_path.unlink(missing_ok=True)
+                log.warning("Scene %d download failed via %s (%s); trying fallback", index, source_name, type(exc).__name__)
 
     if not paths:
         raise RuntimeError(

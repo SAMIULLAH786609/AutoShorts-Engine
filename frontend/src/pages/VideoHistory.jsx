@@ -6,6 +6,7 @@ const STATUS_BADGE = {
   complete: <span className="badge badge-success">✓ Uploaded</span>,
   failed:   <span className="badge badge-error">✗ Failed</span>,
   running:  <span className="badge badge-warning">⟳ Generating</span>,
+  uploading: <span className="badge badge-info">↑ Uploading</span>,
   pending:  <span className="badge badge-info">◷ Pending</span>,
 }
 

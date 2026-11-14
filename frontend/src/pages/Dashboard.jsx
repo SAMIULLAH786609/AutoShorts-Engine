@@ -7,6 +7,7 @@ const STATUS_BADGE = {
   complete: <span className="badge badge-success">✓ Uploaded</span>,
   failed:   <span className="badge badge-error">✗ Failed</span>,
   running:  <span className="badge badge-warning">⟳ Generating</span>,
+  uploading: <span className="badge badge-info">↑ Uploading</span>,
   pending:  <span className="badge badge-info">◷ Pending</span>,
 }
 
@@ -59,7 +60,7 @@ export default function Dashboard() {
 
   // Poll every 15 seconds while a job is running
   useEffect(() => {
-    const hasRunning = stats?.recent_jobs?.some(j => j.status === 'running' || j.status === 'pending')
+    const hasRunning = stats?.recent_jobs?.some(j => ['running', 'pending', 'uploading'].includes(j.status))
     if (!hasRunning) return
     const id = setInterval(fetchStats, 15000)
     return () => clearInterval(id)

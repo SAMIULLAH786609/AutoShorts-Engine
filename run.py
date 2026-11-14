@@ -66,6 +66,9 @@ Examples:
 
     try:
         results = run_daily_batch(count=count)
+        if not results:
+            log.error("No videos were uploaded. Check logs/autoshorts.log for the failed step.")
+            sys.exit(1)
         log.info(
             "\n✅  Done. %d video(s) uploaded successfully.", len(results)
         )

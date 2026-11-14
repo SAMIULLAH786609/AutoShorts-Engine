@@ -179,7 +179,9 @@ def fetch_rss_trends() -> list[TrendItem]:
 
     for source_name, feed_url in RSS_FEEDS.items():
         try:
-            parsed = feedparser.parse(feed_url)
+            response = requests.get(feed_url, timeout=min(API_TIMEOUT_SECONDS, 15))
+            response.raise_for_status()
+            parsed = feedparser.parse(response.content)
 
             for entry in parsed.entries[:20]:
                 title = str(entry.get("title", "")).strip()
@@ -231,7 +233,10 @@ def fetch_google_trends() -> list[TrendItem]:
                 f"https://trends.google.com/trending/rss?geo={geo_code}",
                 f"https://trends.google.com/trends/trendingsearches/daily/rss?geo={geo_code}",
             ):
-                parsed = feedparser.parse(url)
+                response = requests.get(url, timeout=min(API_TIMEOUT_SECONDS, 15))
+                if response.status_code != 200:
+                    continue
+                parsed = feedparser.parse(response.content)
                 if parsed.entries:
                     break
 
@@ -577,6 +582,4 @@ def collect_worldwide_trends() -> list[dict[str, Any]]:
     )
 
     # Apply money-niche filter — keep niche-relevant trends + top generic context
-    niche_filtered = _filter_for_money_niche(deduped, max_non_niche=20)
-
-    return [asdict(item) for item in niche_filtered]
+    return [asdict(item) for item in deduped]

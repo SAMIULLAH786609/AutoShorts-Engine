@@ -57,7 +57,9 @@ def scheduled_job() -> None:
 
 def start_scheduler() -> None:
     """Configure and start the blocking scheduler."""
-    scheduler = BlockingScheduler(timezone="local")
+    # Omitting timezone uses the system's local zone. "local" is not an IANA
+    # timezone name and raises ZoneInfoNotFoundError on current APScheduler.
+    scheduler = BlockingScheduler()
 
     h1, m1 = _parse_time(UPLOAD_TIME_1)
     h2, m2 = _parse_time(UPLOAD_TIME_2)

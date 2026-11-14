@@ -1,5 +1,5 @@
 @echo off
-cd /d "c:\Users\786mu\OneDrive\Attachments\Desktop\AutoShorts-Engine"
+cd /d "%~dp0"
 echo ============================================
 echo  AutoShorts Engine - Auto Daily Upload
 echo  Starting: %date% %time%

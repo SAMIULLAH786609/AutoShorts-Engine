@@ -148,7 +148,7 @@ def trigger_job(
         db.query(VideoJob)
         .filter(
             VideoJob.user_id == current_user.id,
-            VideoJob.status.in_(["pending", "running"]),
+            VideoJob.status.in_(["pending", "running", "uploading"]),
         )
         .first()
     )
@@ -267,7 +267,7 @@ def delete_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job.status == "running":
+    if job.status in ("pending", "running", "uploading"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete a running job",
@@ -279,164 +279,109 @@ def delete_job(
 
 
 def _run_pipeline_task(job_id: str, user_id: str, channel_id: str) -> None:
-    """
-    Background function that runs the full pipeline for one user.
-    Uses a strict mutex lock so ONLY ONE video executes across the entire system.
-    """
-    import gc
-    import time
-    from backend.database import SessionLocal
+    """Run a durable job; never restart an upload whose outcome is uncertain."""
+    import logging
+    from sqlalchemy import text
+    from backend.database import SessionLocal, engine
 
-    # Acquire lock non-blockingly so simultaneous jobs never run together
-    acquired = _GLOBAL_PIPELINE_LOCK.acquire(blocking=False)
-    if not acquired:
-        _db_tmp = SessionLocal()
-        try:
-            j = _db_tmp.query(VideoJob).filter(VideoJob.id == job_id).first()
-            if j:
-                # Silently delete duplicate job record so history stays clean without false red error rows
-                _db_tmp.delete(j)
-                _db_tmp.commit()
-        except Exception:
-            pass
-        finally:
-            _db_tmp.close()
+    log = logging.getLogger("autoshorts.jobs")
+    if not _GLOBAL_PIPELINE_LOCK.acquire(blocking=False):
+        # Leave it pending so the scheduler can dispatch it when capacity is free.
         return
-
-    db = SessionLocal()
-    # Track whether the lock was released early (before retry sleep).
-    # This prevents a double-release error in the finally block.
-    _lock_released = False
-
+    db = None
+    lock_connection = None
     try:
-        job  = db.query(VideoJob).filter(VideoJob.id == job_id).first()
-        user = db.query(User).filter(User.id == user_id).first()
-        channel = db.query(YouTubeChannel).filter(YouTubeChannel.id == channel_id).first()
+        # Keep a dedicated transaction open so the lock also works behind
+        # transaction-pooling database proxies.
+        if engine.dialect.name == "postgresql":
+            lock_connection = engine.connect()
+            acquired = lock_connection.execute(text("SELECT pg_try_advisory_xact_lock(731904211)")).scalar()
+            if not acquired:
+                return
 
-        if not job or not user or not channel:
-            return
-
-        # Mark as running
-        job.status     = "running"
-        job.started_at = datetime.now(timezone.utc)
-        db.commit()
-
-        # Force garbage collection before heavy pipeline work
-        gc.collect()
-
-        # Run the pipeline
-        from backend.pipeline_runner import run_pipeline_for_user
-        result = run_pipeline_for_user(user=user, channel=channel, db=db, job_id=job.id)
-
-        # Update job with results (the video is already on YouTube, so it is
-        # recorded as complete even if the user pressed Stop at the very end)
-        job.status           = "complete"
-        job.error_message    = None
-        job.completed_at     = datetime.now(timezone.utc)
-        job.topic            = result.get("topic", "")
-        job.title            = result.get("title", "")
-        job.style            = result.get("style", "")
-        job.video_url        = result.get("video_url", "")
-        job.thumbnail_url    = result.get("thumbnail_url", "")
-        job.youtube_video_id = result.get("youtube_video_id", "")
-        job.youtube_url      = f"https://youtu.be/{result.get('youtube_video_id', '')}" if result.get("youtube_video_id") else ""
-        job.duration         = result.get("duration", 0.0)
-        db.commit()
-
-    except Exception as exc:
-        error_msg = str(exc)[:2000]
-        # Default to "give up" so that if we cannot even read the job back we
-        # never spin up an endless chain of retries.
-        retry_count = MAX_AUTO_RETRIES
-        cancelled   = False
-
-        try:
-            # The failure may have come from the DB itself — the session must
-            # be rolled back before it can be used again.
-            db.rollback()
-            job = db.query(VideoJob).filter(VideoJob.id == job_id).first()
-            if job:
-                cancelled = (
-                    job.status == "failed"
-                    and "Cancelled" in (job.error_message or "")
-                )
-                if not cancelled:
-                    retry_count       = (job.retry_count or 0) + 1
-                    job.status        = "failed"
-                    job.completed_at  = datetime.now(timezone.utc)
-                    job.error_message = f"[Attempt {retry_count}] {error_msg}"
-                    job.retry_count   = retry_count
-                    db.commit()
-        except Exception:
-            try:
+        db = SessionLocal()
+        while True:
+            job = db.query(VideoJob).filter(VideoJob.id == job_id).with_for_update().first()
+            if not job or job.status != "pending":
                 db.rollback()
-            except Exception:
-                pass
-
-        # ── AUTO-RETRY (never for jobs the user cancelled) ───────
-        if not cancelled and retry_count < MAX_AUTO_RETRIES:
-            import logging as _logging
-            _log = _logging.getLogger("autoshorts.jobs")
-            _log.warning(
-                "Job %s failed (attempt %d/%d): %s. Retrying in %ds...",
-                job_id, retry_count, MAX_AUTO_RETRIES, error_msg[:150], RETRY_DELAY_SEC,
-            )
-            db.close()
-            db = None
-            gc.collect()
-
-            # CRITICAL FIX: Release the lock BEFORE sleeping so the retry
-            # thread can successfully acquire it. Without this, the retry thread
-            # sees the lock still held and instantly fails with "[Concurrency Lock]".
+                return
+            user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+            channel = db.query(YouTubeChannel).filter(
+                YouTubeChannel.id == channel_id, YouTubeChannel.user_id == user_id,
+                YouTubeChannel.is_connected == True,
+            ).first()
+            if not user or not channel:
+                job.status = "failed"
+                job.error_message = "Account inactive or YouTube channel disconnected."
+                job.completed_at = datetime.now(timezone.utc)
+                db.commit()
+                return
+            job.status = "running"
+            job.started_at = datetime.now(timezone.utc)
+            job.completed_at = None
+            job.error_message = None
+            db.commit()
             try:
-                _GLOBAL_PIPELINE_LOCK.release()
-                _lock_released = True
-            except RuntimeError:
-                _lock_released = True  # already released, still safe
-
-            time.sleep(RETRY_DELAY_SEC)
-
-            db2 = SessionLocal()
-            try:
-                new_job = VideoJob(
-                    user_id     = user_id,
-                    channel_id  = channel_id,
-                    status      = "pending",
-                    trigger     = "retry",
-                    retry_count = retry_count,
-                )
-                db2.add(new_job)
-                db2.commit()
-                db2.refresh(new_job)
-                _log.info("Auto-retry job created: %s (attempt %d)", new_job.id, retry_count + 1)
-
-                import threading as _threading
-                t = _threading.Thread(
-                    target = _run_pipeline_task,
-                    args   = (new_job.id, user_id, channel_id),
-                    daemon = True,
-                    name   = f"pipeline-retry-{new_job.id[:8]}",
-                )
-                t.start()
-            except Exception as retry_exc:
-                _log.error("Failed to create retry job: %s", retry_exc)
-            finally:
-                db2.close()
-            return
-        # ── END AUTO-RETRY ───────────────────────────────────────
-
+                gc.collect()
+                from backend.pipeline_runner import run_pipeline_for_user
+                result = run_pipeline_for_user(user=user, channel=channel, db=db, job_id=job_id)
+                db.refresh(job)
+                job.status = "complete"
+                job.error_message = None
+                job.completed_at = datetime.now(timezone.utc)
+                for key in ("topic", "title", "style", "video_url", "thumbnail_url", "youtube_video_id", "duration"):
+                    if key in result:
+                        setattr(job, key, result[key])
+                job.youtube_url = f"https://youtu.be/{job.youtube_video_id}" if job.youtube_video_id else ""
+                db.commit()
+                return
+            except Exception as exc:
+                log.exception("Pipeline job %s failed", job_id)
+                db.rollback()
+                db.expire_all()
+                job = db.query(VideoJob).filter(VideoJob.id == job_id).with_for_update().first()
+                if not job:
+                    return
+                if job.youtube_video_id:
+                    # Upload is durable even if later bookkeeping failed.
+                    job.status = "complete"
+                    job.error_message = None
+                    job.completed_at = datetime.now(timezone.utc)
+                    db.commit()
+                    return
+                if job.status == "failed" and "Cancelled" in (job.error_message or ""):
+                    return
+                if job.status == "uploading":
+                    job.status = "failed"
+                    job.error_message = (
+                        "YouTube upload could not be confirmed. Check your channel before retrying "
+                        "to avoid a duplicate. Details: " + str(exc)[:1200]
+                    )
+                    job.completed_at = datetime.now(timezone.utc)
+                    db.commit()
+                    return
+                job.retry_count = (job.retry_count or 0) + 1
+                job.error_message = f"[Attempt {job.retry_count}] {str(exc)[:1800]}"
+                if job.retry_count >= MAX_AUTO_RETRIES:
+                    job.status = "failed"
+                    job.completed_at = datetime.now(timezone.utc)
+                    db.commit()
+                    return
+                job.status = "pending"
+                db.commit()
+                # Same job identity preserves schedule accounting and retry limits.
+                time.sleep(RETRY_DELAY_SEC)
+    except Exception:
+        log.exception("Could not execute job %s", job_id)
+        if db is not None:
+            db.rollback()
     finally:
         if db is not None:
+            db.close()
+        if lock_connection is not None:
             try:
-                db.close()
-            except Exception:
-                pass
+                lock_connection.rollback()
+            finally:
+                lock_connection.close()
+        _GLOBAL_PIPELINE_LOCK.release()
         gc.collect()
-        # Only release the lock if we haven't already released it early
-        # (i.e. before the retry sleep). Prevents RuntimeError on double-release.
-        if not _lock_released:
-            try:
-                _GLOBAL_PIPELINE_LOCK.release()
-            except RuntimeError:
-                pass
-

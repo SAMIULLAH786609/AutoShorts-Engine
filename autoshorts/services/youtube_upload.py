@@ -49,6 +49,7 @@ def get_youtube_service():
     if credentials and credentials.expired and credentials.refresh_token:
         log.debug("Refreshing expired OAuth token…")
         credentials.refresh(Request())
+        TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
 
     if not credentials or not credentials.valid:
         log.info("Opening OAuth browser flow (one-time setup)…")
@@ -128,7 +129,6 @@ def upload_video(
         "status": {
             "privacyStatus":             privacy_status,
             "selfDeclaredMadeForKids":   False,
-            "madeForKids":               False,
         },
     }
 
@@ -149,7 +149,7 @@ def upload_video(
 
     response = None
     while response is None:
-        status, response = request.next_chunk()
+        status, response = request.next_chunk(num_retries=3)
         if status:
             log.info("Upload progress: %d%%", int(status.progress() * 100))
 
@@ -159,4 +159,4 @@ def upload_video(
         "Upload successful! Video ID: %s | URL: https://youtu.be/%s",
         video_id, video_id,
     )
-    return video_id
+    return video_id

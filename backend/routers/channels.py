@@ -85,7 +85,7 @@ def get_oauth_url(current_user: User = Depends(get_current_user)):
         "prompt":        "consent",
         # Signed, short-lived token carrying the user_id through the OAuth flow.
         # A raw user_id here would let anyone attach a channel to another account.
-        "state":         create_access_token(current_user.id, expires_minutes=15),
+        "state":         create_access_token(current_user.id, expires_minutes=15, purpose="oauth"),
     }
 
     url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -111,7 +111,7 @@ def oauth_callback(
     if not code or not state:
         return _redirect_to_frontend("/settings?error=missing_code")
 
-    user_id = decode_access_token(state)
+    user_id = decode_access_token(state, purpose="oauth")
     if not user_id:
         return _redirect_to_frontend("/settings?error=invalid_state")
 
@@ -288,6 +288,8 @@ def refresh_channel_tokens(channel: YouTubeChannel, db: Session) -> str:
         data = resp.json()
 
     new_access = data.get("access_token", "")
+    if not new_access:
+        raise RuntimeError("Google returned no access token. Reconnect the YouTube channel.")
     expires_in = int(data.get("expires_in", 3600))
 
     channel.access_token_enc = encrypt_token(new_access)

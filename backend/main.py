@@ -53,23 +53,8 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("Column migration warning (safe to ignore if columns already exist): %s", exc)
 
-    # Clean temporary directories on startup to prevent storage build-up
-    try:
-        import shutil
-        from config import DOWNLOAD_DIR, OUTPUT_DIR, THUMBNAIL_DIR
-        for folder in (DOWNLOAD_DIR, OUTPUT_DIR, THUMBNAIL_DIR):
-            if folder.exists():
-                for item in folder.iterdir():
-                    try:
-                        if item.is_file():
-                            item.unlink()
-                        elif item.is_dir():
-                            shutil.rmtree(item)
-                    except Exception:
-                        pass
-        log.info("Temporary directories cleaned up on startup")
-    except Exception as exc:
-        log.warning("Startup cleanup failed: %s", exc)
+    # Workers clean their own temporary files. Startup must not erase another
+    # worker's inputs or rendered videos waiting for an upload retry.
 
     # Start the background scheduler (runs jobs every minute)
     from backend.scheduler import start_scheduler

@@ -47,6 +47,17 @@ def choose_voice(language: str = "English", gender: str = "female") -> str:
     if "urdu" in language or language == "ur":
         return VOICE_URDU_MALE if gender == "male" else VOICE_URDU_FEMALE
 
+    voices = {
+        "spanish": ("es-ES-ElviraNeural", "es-ES-AlvaroNeural"),
+        "french": ("fr-FR-DeniseNeural", "fr-FR-HenriNeural"),
+        "german": ("de-DE-KatjaNeural", "de-DE-ConradNeural"),
+        "hindi": ("hi-IN-SwaraNeural", "hi-IN-MadhurNeural"),
+    }
+    aliases = {"es": "spanish", "fr": "french", "de": "german", "hi": "hindi"}
+    pair = voices.get(aliases.get(language, language))
+    if pair:
+        return pair[1 if gender == "male" else 0]
+
     return VOICE_ENGLISH_MALE if gender == "male" else VOICE_ENGLISH_FEMALE
 
 
@@ -65,12 +76,15 @@ async def _synthesize(
     """
     rate, pitch = _STYLE_PARAMS.get(style.lower(), (_DEFAULT_RATE, _DEFAULT_PITCH))
 
+    # Edge-TTS versions before WordBoundary selection do not accept boundary.
+    import inspect
+    timing_options = {"boundary": "WordBoundary"} if "boundary" in inspect.signature(edge_tts.Communicate).parameters else {}
     communicator = edge_tts.Communicate(
         text=text,
         voice=voice,
         rate=rate,
         pitch=pitch,
-        boundary="WordBoundary",   # per-word timing for synced captions
+        **timing_options,
     )
 
     words: list[dict] = []

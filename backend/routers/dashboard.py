@@ -28,7 +28,7 @@ def get_dashboard(
     total    = jobs.count()
     uploaded = jobs.filter(VideoJob.status == "complete").count()
     failed   = jobs.filter(VideoJob.status == "failed").count()
-    pending  = jobs.filter(VideoJob.status.in_(["pending", "running"])).count()
+    pending  = jobs.filter(VideoJob.status.in_(["pending", "running", "uploading"])).count()
 
     channel_connected = (
         db.query(YouTubeChannel)

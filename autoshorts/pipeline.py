@@ -200,7 +200,10 @@ def _step_research(topic: str) -> str:
 def _step_generate_plan(topic: str, style: str, research: str) -> VideoPlan:
     log_step(log, "SCRIPT GENERATION", "Writing original script…")
     return _retry(
-        lambda: generate_video_plan(topic=topic, style=style, research_summary=research),
+        lambda: generate_video_plan(
+            topic=topic, style=style, research_summary=research,
+            niche=CHANNEL_NICHE, language=DEFAULT_LANGUAGE, gender=DEFAULT_GENDER,
+        ),
         label="Video plan generation",
     )
 
@@ -211,7 +214,7 @@ def _step_generate_voice(plan: VideoPlan, audio_path: Path) -> Path:
         lambda: generate_voice(
             text=plan.script,
             output_path=audio_path,
-            voice=plan.voice,
+            voice=None,
             language=DEFAULT_LANGUAGE,
             gender=DEFAULT_GENDER,
             style=plan.style,
@@ -270,16 +273,14 @@ def _step_upload(plan: VideoPlan, video_path: Path) -> str:
         "\n\nThis content is created with original research and an original script."
     )
 
-    return _retry(
-        lambda: upload_video(
-            video_path=video_path,
-            title=plan.title,
-            description=description,
-            hashtags=plan.hashtags,
-            privacy_status=DEFAULT_PRIVACY,
-        ),
-        label="YouTube upload",
-        delay=10.0,
+    # Chunk retries resume the same upload; creating another insert request
+    # after an uncertain response could publish the same video twice.
+    return upload_video(
+        video_path=video_path,
+        title=plan.title,
+        description=description,
+        hashtags=plan.hashtags,
+        privacy_status=DEFAULT_PRIVACY,
     )
 
 

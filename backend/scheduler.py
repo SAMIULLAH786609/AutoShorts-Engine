@@ -57,7 +57,7 @@ def _compute_slots(start_time: str, end_time: str, videos_per_day: int) -> list[
         slots_min = [start_min]
     else:
         step = (end_min - start_min) / (videos_per_day - 1)
-        slots_min = [int(round(start_min + i * step)) for i in range(videos_per_day)]
+        slots_min = sorted(set(int(round(start_min + i * step)) for i in range(videos_per_day)))
 
     result = []
     for m in slots_min:
@@ -84,14 +84,7 @@ def start_scheduler() -> None:
         max_instances    = 1,
     )
 
-    # Every day at UTC midnight: delete uploaded videos with 0 views after 2 days
-    _scheduler.add_job(
-        _auto_delete_zero_view_videos,
-        trigger          = CronTrigger(hour=0, minute=0),
-        id               = "auto_delete_zero_views",
-        replace_existing = True,
-        max_instances    = 1,
-    )
+    # Published videos are retained. Zero views is not a reason to delete an upload.
 
     # Every hour: pull fresh views/likes/comments for all uploaded Shorts from YouTube API
     _scheduler.add_job(
@@ -158,6 +151,15 @@ def _check_and_fire_scheduled_jobs() -> None:
     db = SessionLocal()
 
     try:
+        # Do not recover a healthy job owned by another server process.
+        from backend.database import engine
+        if engine.dialect.name == "postgresql":
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                available = conn.execute(text("SELECT pg_try_advisory_xact_lock(731904211)")).scalar()
+                conn.rollback()
+                if not available:
+                    return
         now_utc      = datetime.now(timezone.utc)
         now_time     = now_utc.strftime("%H:%M")
         today_start  = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -167,7 +169,7 @@ def _check_and_fire_scheduled_jobs() -> None:
         active_in_db = (
             db.query(VideoJob)
             .filter(
-                VideoJob.status.in_(["pending", "running"]),
+                VideoJob.status.in_(["running", "uploading"]),
                 VideoJob.created_at > stuck_cutoff,
             )
             .first()
@@ -180,13 +182,22 @@ def _check_and_fire_scheduled_jobs() -> None:
         stuck_jobs = (
             db.query(VideoJob)
             .filter(
-                VideoJob.status.in_(["pending", "running"]),
+                VideoJob.status.in_(["running", "uploading"]),
                 VideoJob.created_at <= stuck_cutoff,
             )
             .all()
         )
 
         for stuck in stuck_jobs:
+            if stuck.status == "uploading":
+                stuck.status = "complete" if stuck.youtube_video_id else "failed"
+                stuck.completed_at = now_utc
+                stuck.error_message = None if stuck.youtube_video_id else (
+                    "Server stopped during YouTube upload. Check your channel before retrying; "
+                    "the upload may already exist."
+                )
+                db.commit()
+                continue
             retry_count = (stuck.retry_count or 0) + 1
             if retry_count > MAX_AUTO_RETRIES:
                 stuck.status        = "failed"
@@ -204,21 +215,20 @@ def _check_and_fire_scheduled_jobs() -> None:
             if not channel:
                 continue
 
-            stuck.status        = "failed"
-            stuck.error_message = f"[Auto-retry {retry_count}/{MAX_AUTO_RETRIES}] Server ran out of memory (OOM). Retrying now..."
+            stuck.status        = "pending"
+            stuck.error_message = f"[Recovery {retry_count}/{MAX_AUTO_RETRIES}] Interrupted before upload; retrying."
             stuck.retry_count   = retry_count
             db.commit()
 
-            new_job = _fire_new_job(
-                user_id     = stuck.user_id,
-                channel_id  = stuck.channel_id,
-                trigger     = "retry",
-                db          = db,
-                retry_count = retry_count,
-            )
-            log.info("CRASH RECOVERY: stuck job %s -> new job %s", stuck.id[:8], new_job.id[:8])
-            # Only one pipeline may run at a time — any other stuck jobs and
-            # scheduled slots are handled on a later tick.
+        # Dispatch queued/recovered jobs without deleting or replacing their history.
+        pending = db.query(VideoJob).filter(VideoJob.status == "pending").order_by(VideoJob.created_at).first()
+        if pending:
+            import threading
+            from backend.routers.jobs import _run_pipeline_task
+            threading.Thread(
+                target=_run_pipeline_task, args=(pending.id, pending.user_id, pending.channel_id),
+                daemon=True, name=f"pipeline-{pending.id[:8]}",
+            ).start()
             return
 
         # ── PART 2: SCHEDULED FIRING ─────────────────────────────────────────
@@ -264,7 +274,7 @@ def _check_and_fire_scheduled_jobs() -> None:
                 db.query(VideoJob)
                 .filter(
                     VideoJob.user_id == user.id,
-                    VideoJob.status.in_(["pending", "running"]),
+                    VideoJob.status.in_(["pending", "running", "uploading"]),
                 )
                 .first()
             )

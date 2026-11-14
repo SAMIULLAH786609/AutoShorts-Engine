@@ -44,16 +44,18 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 # ── JWT tokens ────────────────────────────────────────────────
 
-def create_access_token(user_id: str, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
+def create_access_token(user_id: str, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES, purpose: str = "access") -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
-    payload = {"sub": user_id, "exp": expire}
+    payload = {"sub": user_id, "exp": expire, "purpose": purpose}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> str | None:
+def decode_access_token(token: str, purpose: str = "access") -> str | None:
     """Return user_id from token, or None if invalid/expired."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose", "access") != purpose:
+            return None
         return payload.get("sub")
     except JWTError:
         return None

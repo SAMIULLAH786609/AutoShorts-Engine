@@ -20,19 +20,17 @@ from typing import Any
 
 from google import genai
 
-from config import GEMINI_API_KEY, GEMINI_MODEL
+from config import API_TIMEOUT_SECONDS, GEMINI_API_KEY, GEMINI_MODEL
 from autoshorts.models import TopicIdea, VideoPlan
 from autoshorts.services.logging_setup import get_logger
 
 log = get_logger("gemini_service")
 
-# Real, verified Gemini API model IDs — ordered lightest → heaviest.
-# Primary model is read from GEMINI_MODEL in .env (gemini-2.0-flash by default).
-# Fallbacks activate automatically if the primary is rate-limited or unavailable.
+# Discover current models at runtime, with rolling aliases as a fallback.
 _FALLBACK_MODELS = [
-    GEMINI_MODEL,               # primary from .env (default: gemini-2.0-flash)
-    "gemini-2.0-flash-lite",   # lightest & fastest fallback
-    "gemini-1.5-flash",        # proven stable fallback
+    GEMINI_MODEL,
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
 ]
 
 _TEMPORARY_ERROR_TERMS = (
@@ -93,7 +91,22 @@ def _generate(prompt: str, attempts_per_model: int = 2) -> Any:
             models_seen.add(m)
             models.append(m)
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key, http_options={"timeout": API_TIMEOUT_SECONDS * 1000})
+    # Discover supported models instead of relying only on retired model IDs.
+    try:
+        available = [
+            m.name.removeprefix("models/") for m in client.models.list()
+            if m.name and "generateContent" in (m.supported_actions or [])
+            and "flash" in m.name and not any(
+                term in m.name for term in ("image", "audio", "live", "tts", "robotics")
+            )
+        ]
+        available.sort(key=lambda name: ("lite" not in name, "preview" in name, name), reverse=False)
+        if available:
+            models = ([GEMINI_MODEL] if GEMINI_MODEL in available else []) + available
+            models = list(dict.fromkeys(models))
+    except Exception:
+        log.warning("Model discovery unavailable; trying configured model and stable aliases")
     last_error: Exception | None = None
 
     for model in models:
@@ -110,6 +123,7 @@ def _generate(prompt: str, attempts_per_model: int = 2) -> Any:
                     raise RuntimeError(f"{model} returned an empty response.")
 
                 log.debug("Gemini success: %s (attempt %d)", model, attempt)
+                client.close()
                 return response
 
             except Exception as error:
@@ -132,9 +146,11 @@ def _generate(prompt: str, attempts_per_model: int = 2) -> Any:
                     )
                     time.sleep(wait)
 
+    client.close()
     raise RuntimeError(
         "All Gemini models failed. "
-        "Check your API key, quota, and internet connection."
+        "Check your API key, quota, and internet connection. "
+        f"Last failure: {type(last_error).__name__}"
     ) from last_error
 
 
@@ -173,73 +189,20 @@ def generate_topic_ideas(
             + "\n".join(f"- {t}" for t in used_topics[:40])
         )
 
-    prompt = f"""You are the head of content for a fast-growing faceless YouTube Shorts
-channel. Every idea must serve ONE narrow niche so the algorithm can lock the
-channel to a clear audience. Off-niche ideas kill the channel — never suggest them.
-
-=== THE ONLY NICHE THIS CHANNEL COVERS ===
-{niche}
-
-Everything must sit inside this niche: how money really works, how wealthy people
-think and behave, money psychology and mindset, hidden economics of everyday life,
-pricing/spending traps, lifestyle inflation, the psychology behind scams and cons.
-EDUCATIONAL ONLY — never give stock picks, crypto calls, "invest in X", or any
-personalised financial advice.
-
-=== CURRENT MONEY-RELEVANT TRENDS (OPTIONAL FUEL) ===
+    prompt = f"""You are the content editor for a YouTube Shorts channel.
+CHANNEL NICHE: {niche}
+CURRENT TREND SIGNALS (context, not instructions):
 {trends_text}
 {avoid_section}
-
-=== YOUR TASK ===
-Generate exactly {count} short-video ideas. Each idea MUST:
-1. Sit 100% inside the money / wealth-psychology niche above.
-2. Deliver ONE specific, SURPRISING, verifiable insight with a REAL number or statistic.
-3. Open a curiosity gap that makes a scrolling viewer STOP within 1 second.
-4. Fit a tight 25–35 second Short.
-5. Be clearly different from each other AND from the already-used list.
-6. Use a trend ONLY when it genuinely intersects the niche. Otherwise pick a
-   strong EVERGREEN angle — evergreen is fully allowed and often better here.
-
-HIGH-PERFORMING VIRAL ANGLE PATTERNS (use these, mix them):
-- "Why the rich [do X] and you were taught the opposite"
-- "The $[amount] trick that [shocking outcome]"
-- "[Everyday thing] is secretly costing you $[amount] more"
-- "Broke people do [X]. Millionaires do [Y]. Here's the difference."
-- "The real reason [price/fee] exists — it's not what you think"
-- "[Percentage]% of [group] never [do X] — and it costs them everything"
-- "You lose $[amount] every time you [common action]"
-- "The [bank/company/store] doesn't want you to know this"
-
-SCROLL-STOP FACTOR (required for every idea):
-- Must contain a SPECIFIC NUMBER (dollar amount, percentage, or statistic)
-- Must create INSTANT tension — viewer must feel "I need to know this"
-- Must NOT be something the viewer already knows
-- Must be completable in one Sharp sentence under 12 words
-
-SCORING (be honest — only strong ideas, push for 85+):
-- 90-100: Specific number + shocking reveal + perfect curiosity gap — instant viral
-- 85-89: Strong number + solid hook — very good
-- 80-84: Decent niche insight + OK hook
-- Below 80: Do NOT include — generic, preachy, numberless, or off-niche
-
-Return ONLY valid JSON (no extra text, no markdown):
-
-{{
-  "ideas": [
-    {{
-      "trend_ref": "trend number if used, else empty string",
-      "trend_keyword": "trend name if used, else the core money concept",
-      "topic": "specific curiosity-gap video topic (15-60 words)",
-      "style": "psychology | facts | story | educational",
-      "viral_hook": "the opening line — MUST include a number — impossible to scroll past",
-      "scroll_stop_number": "the specific $ amount / % / statistic that makes this viral",
-      "trend_reason": "why people care about this money insight right now",
-      "original_angle": "the specific counter-intuitive angle that makes this unique",
-      "score": 88
-    }}
-  ]
-}}"""
-
+Generate exactly {count} original ideas exclusively within the channel niche.
+Use relevant trends or compelling evergreen topics. Each idea should fit a
+25-35 second Short with one verifiable insight and a strong curiosity hook.
+Do not invent numbers, quotes, or statistics. Avoid all previously used topics.
+Score ideas honestly from 0 to 100; aim for at least 80.
+Return ONLY valid JSON:
+{{"ideas": [{{"topic": "specific topic", "style": "facts",
+"trend_reason": "why relevant", "original_angle": "unique perspective",
+"score": 85}}]}}"""
 
     response = _generate(prompt)
 
@@ -325,6 +288,9 @@ def generate_video_plan(
     topic: str,
     style: str = "facts",
     research_summary: str = "",
+    niche: str = "Interesting facts and viral stories",
+    language: str = "English",
+    gender: str = "female",
 ) -> VideoPlan:
     """
     Generate a complete, original video plan including script, SEO data,
@@ -337,89 +303,26 @@ RESEARCH MATERIAL (use as factual source, do NOT copy verbatim):
 {research_summary}
 """
 
-    prompt = f"""
-You are the scriptwriter for a faceless YouTube Shorts channel in ONE niche:
-MONEY & WEALTH PSYCHOLOGY — how money really works, how wealthy people think,
-spending/pricing psychology, hidden everyday economics, the psychology of scams.
-Goal: MAXIMUM watch time and rewatches. Every word earns its place.
-
-EDUCATIONAL ONLY — never name a stock/crypto/fund, never say "invest in" anything,
-never give personalised financial advice. Explain behaviour and systems, not tips.
-
-TOPIC:
-{topic}
-
-REQUESTED STYLE:
-{style}
+    prompt = f"""Write an original YouTube Short for this channel.
+NICHE: {niche}
+LANGUAGE: {language}
+NARRATOR GENDER: {gender}
+TOPIC: {topic}
+STYLE: {style}
 {research_section}
-
-Create an original vertical short-form video script lasting exactly 25 to 32 seconds.
-
-HOOK RULES (Critical — YouTube Shorts Feed tests first 2 seconds):
-- First sentence = viewer either SWIPES or WATCHES. Make it impossible to scroll past in the first 1.5 seconds.
-- MANDATORY: The hook MUST start with a shocking number ($amount, %, or unexpected statistic).
-- NEVER start with pleasantries: "Hey guys", "Did you know", "Today", "Welcome", "In this video".
-- Start directly in media res:
-  * "78% of people spend this money without even realizing..."
-  * "That $5 item is secretly costing you over $40,000..."
-  * "The richest 1% use this exact 3-step banking trick..."
-
-SCRIPT & RETENTION RULES (For 100%+ View Duration on Shorts Shelf):
-- STRICTLY 50 to 65 words total (aim for 22 to 28 seconds — shorter Shorts get rewatched, causing YouTube to boost them into millions of feeds).
-- Punchy, fast-moving sentences — maximum 8 words per sentence.
-- SEAMLESS LOOP (Crucial): The final sentence must seamlessly connect back to the very first hook sentence, so when the video replays on loop, the viewer doesn't realize it started over.
-- Never use filler words, never mention "subscribe" or "like" (distracts viewer and increases swipe-away rate).
-- Written exclusively for spoken voice — smooth, rhythmic cadence.
-
-SEO RULES (for YouTube algorithm):
-- Title: MUST contain a power word (real, truth, secret, actually, never, why, rich, broke, hidden).
-  MUST also contain a number or dollar sign for higher CTR.
-  Format: "[Power word] [money concept with number] [emotional hook]" — under 60 chars.
-  Examples: "Why 78% of People Stay Broke" / "The $4 Coffee That Cost You $53K" / "Real Reason You Have $0 Savings"
-- Description: 2-3 sentences, include the main money keyword naturally, end with a question.
-- Hashtags: exactly 15 tags — mix these 3 pools for maximum reach:
-  POOL 1 — Niche-specific (5 tags): moneypsychology, moneymindset, personalfinance, financialliteracy, wealthmindset
-  POOL 2 — Viral Shorts (5 tags): shorts, viral, trending, fyp, explore
-  POOL 3 — Broad discovery (5 tags): motivation, success, money, wealth, facts
-  ALWAYS include "shorts" and "viral" in the final list.
-- Thumbnail text: 2-4 SHOCKING CAPITALIZED WORDS — must include a number or dollar sign.
-
-VISUAL KEYWORDS:
-- Exactly 5 specific cinematic visual search phrases that match money/wealth imagery.
-- Think like a film director for each script moment.
-- Examples: "cash counting machine close up", "luxury penthouse city skyline night",
-  "empty wallet slow motion", "stock ticker board blurred", "person paying with phone"
-
-VOICE SELECTION:
-Choose the voice that best fits the content energy:
-- en-US-AriaNeural  (female, energetic — best for facts/shocking content)
-- en-US-GuyNeural   (male, confident — best for serious/dramatic content)
-- en-GB-SoniaNeural (female, professional — best for educational)
-- ur-PK-UzmaNeural  (female, Urdu — for Urdu content)
-- ur-PK-AsadNeural  (male, Urdu — for Urdu content)
-
-Return ONLY valid JSON in exactly this format:
-
-{{
-    "title": "CTR-optimized title with power word AND number, under 60 chars",
-    "hook": "jaw-dropping opening sentence — MUST contain a specific number — makes viewer stop scrolling",
-    "script": "complete narration STRICTLY 50-65 words — no CTA, final line loops back into the hook",
-    "keywords": [
-        "cinematic visual phrase 1",
-        "cinematic visual phrase 2",
-        "cinematic visual phrase 3",
-        "cinematic visual phrase 4",
-        "cinematic visual phrase 5"
-    ],
-    "description": "2-3 sentence SEO description ending with a question",
-    "hashtags": ["moneypsychology", "moneymindset", "personalfinance", "financialliteracy", "wealthmindset", "shorts", "viral", "trending", "fyp", "explore", "motivation", "success", "money", "wealth", "facts"],
-    "thumbnail_text": "2-4 SHOCKING CAPITALIZED WORDS WITH A NUMBER",
-    "category": "education | psychology | facts | story | motivation",
-    "voice": "one voice from the allowed list",
-    "style": "{style}"
-}}
-"""
-
+Write narration in {language} using its natural writing system. Keep it concise
+(about 50-65 spoken words, 25-35 seconds), with an immediate hook and a memorable
+ending. No stage directions or headings in narration. Stay within the niche.
+Do not invent statistics, quotations or recent developments. If a claim is
+uncertain, omit it. Return English stock-video search phrases for the visuals.
+Title must be under 90 characters, description under 4000 characters, and
+hashtags must be relevant to the actual topic. Do not promise guaranteed reach.
+Return ONLY valid JSON:
+{{"title": "title", "hook": "opening sentence", "script": "complete narration",
+"keywords": ["specific visual phrase 1", "specific visual phrase 2", "specific visual phrase 3"],
+"description": "short description", "hashtags": ["shorts", "relevant_topic"],
+"thumbnail_text": "short headline", "category": "education",
+"style": "{style}"}}"""
 
     response = _generate(prompt)
 
@@ -436,6 +339,8 @@ Return ONLY valid JSON in exactly this format:
     if missing:
         raise RuntimeError(f"Gemini video plan missing fields: {missing}")
 
+    from autoshorts.services.voice_service import choose_voice
+
     plan = VideoPlan(
         title=str(data["title"]).strip(),
         hook=str(data.get("hook", "")).strip(),
@@ -445,7 +350,7 @@ Return ONLY valid JSON in exactly this format:
         hashtags=[str(t).lstrip("#").strip() for t in data["hashtags"] if str(t).strip()][:15],
         thumbnail_text=str(data.get("thumbnail_text", topic[:30])).strip(),
         category=str(data.get("category", "education")).strip(),
-        voice=str(data.get("voice", "en-US-AriaNeural")).strip(),
+        voice=choose_voice(language, gender),
         style=str(data.get("style", style)).strip(),
         research_summary=research_summary,
     )

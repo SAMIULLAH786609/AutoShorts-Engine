@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 # Load backend-specific .env
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR.parent / ".env")
 
 # ── Database ──────────────────────────────────────────────────
 DATABASE_URL: str = os.getenv(

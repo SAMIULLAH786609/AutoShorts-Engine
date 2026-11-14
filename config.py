@@ -51,7 +51,7 @@ NEWS_API_KEY    = os.getenv("NEWS_API_KEY",    "").strip()
 # Gemini model
 # ---------------------------------------------------------------------------
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip()
 
 # ---------------------------------------------------------------------------
 # Channel / content settings

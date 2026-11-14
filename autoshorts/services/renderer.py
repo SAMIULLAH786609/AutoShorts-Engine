@@ -177,6 +177,7 @@ def _build_subtitle_filter(
     duration: float,
     font_path: str,
     word_timings: list[dict] | None = None,
+    caption_dir: Path | None = None,
 ) -> str:
     """
     Build a chained ffmpeg drawtext filter string for word-level subtitles.
@@ -203,7 +204,6 @@ def _build_subtitle_filter(
     # Escape text for ffmpeg (colons, apostrophes, backslashes, percent)
     def escape(text: str) -> str:
         text = text.translate(_PUNCT_MAP)
-        text = text.encode("ascii", "ignore").decode("ascii")
         text = text.replace("%", " PERCENT")
         text = text.replace("$", " USD ")
         text = text.replace("\\", "\\\\")
@@ -219,18 +219,23 @@ def _build_subtitle_filter(
     #   2. Colons escaped after:       C:\\W...  →  C\\:\W...  (wrong order breaks it)
     # CORRECT order: escape backslashes FIRST, then colons.
     if font_path:
-        escaped_font_path = font_path.replace("\\", "\\\\").replace(":", r"\:")
+        escaped_font_path = font_path.replace("\\", "/").replace(":", r"\:")
     else:
         escaped_font_path = ""
     font_arg = f":fontfile='{escaped_font_path}'" if escaped_font_path else ""
 
     parts = []
-    for text_raw, t_start, t_end in cards:
+    for index, (text_raw, t_start, t_end) in enumerate(cards):
         text = escape(text_raw.upper())   # ALL-CAPS reads better on Shorts
+        text_arg = f"text='{text}'"
+        if caption_dir is not None:
+            name = f"caption_{index}.txt"
+            (caption_dir / name).write_text(text_raw.upper(), encoding="utf-8")
+            text_arg = f"textfile='{name}':expansion=none"
 
         dt = (
             f"drawtext="
-            f"text='{text}'"
+            f"{text_arg}"
             f"{font_arg}"
             f":fontsize={SUBTITLE_FONT_SIZE}"
             f":fontcolor=white"
@@ -271,6 +276,20 @@ def render_short(
     video_paths:   list[Path],
     output_path:   Path,
     bg_music_path: Path | None = None,
+) -> None:
+    # UTF-8 caption files avoid filter escaping and Windows command-line limits.
+    # These temporary files are removed automatically after every render.
+    with tempfile.TemporaryDirectory(prefix="autoshorts-render-") as folder:
+        _render_short(
+            script, audio_path.resolve(), [p.resolve() for p in video_paths],
+            output_path.resolve(),
+            bg_music_path.resolve() if bg_music_path else None, Path(folder),
+        )
+
+
+def _render_short(
+    script: str, audio_path: Path, video_paths: list[Path], output_path: Path,
+    bg_music_path: Path | None, caption_dir: Path,
 ) -> None:
     """
     Render a YouTube Short using ffmpeg subprocess.
@@ -338,7 +357,7 @@ def render_short(
             f"[{i}:v]"
             f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT},"
-            f"setsar=1"
+            f"setsar=1,fps={VIDEO_FPS},setpts=PTS-STARTPTS"
             f"[sv{i}]"
         )
 
@@ -353,7 +372,7 @@ def render_short(
         vcat = "[sv0]"
 
     # Add subtitles via drawtext chains
-    subtitle_chain = _build_subtitle_filter(script, duration, font_path, word_timings)
+    subtitle_chain = _build_subtitle_filter(script, duration, font_path, word_timings, caption_dir)
     filter_parts.append(f"{vcat}{subtitle_chain}[vfinal]")
 
     # Audio: mix narration + optional music
@@ -368,13 +387,15 @@ def render_short(
         audio_map = f"{narration_idx}:a"
 
     filter_complex = ";".join(filter_parts)
+    filter_path = caption_dir / "render.ffgraph"
+    filter_path.write_text(filter_complex, encoding="utf-8")
 
     # ── Assemble full ffmpeg command ─────────────────────────────────────────
     ffmpeg_exe = _find_ffmpeg()
     cmd = [
         ffmpeg_exe, "-y",
         *cmd_inputs,
-        "-filter_complex", filter_complex,
+        "-filter_complex_script", str(filter_path),
         "-map", "[vfinal]",
         "-map", audio_map,
         "-t", f"{duration:.3f}",
@@ -398,6 +419,8 @@ def render_short(
         capture_output=True,
         text=True,
         timeout=300,   # 5 minute timeout
+        cwd=caption_dir,
+        encoding="utf-8", errors="replace",
     )
 
     if result.returncode != 0:

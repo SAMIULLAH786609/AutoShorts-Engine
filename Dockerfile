@@ -20,8 +20,13 @@ COPY backend/requirements.txt ./backend_requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir -r backend_requirements.txt
 
-# Copy project source code
-COPY . .
+# Copy application source explicitly; local .env, OAuth tokens, databases,
+# media and virtual environments must never be included in the image.
+COPY config.py run.py make_video.py ./
+COPY autoshorts/*.py ./autoshorts/
+COPY autoshorts/services/*.py ./autoshorts/services/
+COPY backend/*.py ./backend/
+COPY backend/routers/*.py ./backend/routers/
 
 # Create all folders used by the app
 RUN mkdir -p credentials output downloads thumbnails metadata logs data music cache && \

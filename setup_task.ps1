@@ -1,7 +1,7 @@
 # AutoShorts Engine — Windows Task Scheduler Installer
 # Automatically generates and uploads Shorts to YouTube 2x daily without manual effort.
 
-$batPath = "c:\Users\786mu\OneDrive\Attachments\Desktop\AutoShorts-Engine\auto_upload.bat"
+$batPath = Join-Path $PSScriptRoot "auto_upload.bat"
 
 $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$batPath`""
 
